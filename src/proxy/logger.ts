@@ -120,11 +120,40 @@ export class DebugMarkdownLogger {
     }
     lines.push("", "| Header | Value |", "| --- | --- |");
     for (const [header, value] of headers) {
-      lines.push(`| ${header} | ${value} |`);
+      lines.push(`| ${header} | ${redactHeaderValue(header, value)} |`);
     }
     if (body && body.trim()) {
       lines.push("", "```json", tryPrettyJson(body), "```");
     }
     await fs.writeFile(filePath, lines.join("\n"), "utf8");
   }
+}
+
+function redactHeaderValue(header: string, value: string): string {
+  const normalizedHeader = header.trim().toLowerCase();
+  if (
+    normalizedHeader !== "authorization" &&
+    normalizedHeader !== "proxy-authorization"
+  ) {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  const bearerPrefix = /^bearer\s+/i;
+  if (!bearerPrefix.test(trimmed)) {
+    return "[redacted]";
+  }
+
+  const token = trimmed.replace(bearerPrefix, "").trim();
+  if (!token) {
+    return "Bearer [redacted]";
+  }
+
+  const prefix = token.slice(0, 4);
+  const suffix = token.slice(-3);
+  if (token.length <= 8) {
+    return `Bearer ${prefix}...`;
+  }
+
+  return `Bearer ${prefix}...${suffix}`;
 }
