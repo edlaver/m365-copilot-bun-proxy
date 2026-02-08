@@ -1,6 +1,6 @@
 {
   "listenUrl": "http://localhost:4000",
-  "debugPath": "./Logs",
+  "debugPath": "./logs",
   "transport": "substrate",
   "graphBaseUrl": "https://graph.microsoft.com",
   "createConversationPath": "/beta/copilot/conversations",

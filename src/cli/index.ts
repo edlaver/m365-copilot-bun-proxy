@@ -48,7 +48,9 @@ function showUsage(): number {
   console.log(
     'Usage: bun src/cli/index.ts chat [--message "..."] [--token "..."] [--proxy "http://localhost:4000"] [--model "m365-copilot"]',
   );
-  console.log('       bun src/cli/index.ts status [--proxy "http://localhost:4000"]');
+  console.log(
+    '       bun src/cli/index.ts status [--proxy "http://localhost:4000"]',
+  );
   console.log('       bun src/cli/index.ts token set [--token "..."]');
   console.log("       bun src/cli/index.ts token clear");
   console.log("       bun src/cli/index.ts token status");
@@ -64,12 +66,17 @@ async function runTokenCommand(parsedArgs: ParsedArgs): Promise<number> {
   const sub = parsedArgs.positionals[1]?.toLowerCase() ?? "status";
   const tokenPath = await getTokenPath();
   if (sub === "set") {
-    const provided = firstNonEmpty(parsedArgs.options.token, process.env.YARPILOT_TOKEN);
+    const provided = firstNonEmpty(
+      parsedArgs.options.token,
+      process.env.YARPILOT_TOKEN,
+    );
     const parsedToken = provided
       ? parseTokenOrThrow(provided)
       : await promptForTokenInteractive();
     await saveToken(tokenPath, parsedToken.token, parsedToken.expiresAtUtc);
-    console.log(`Saved token. Expires: ${parsedToken.expiresAtUtc.toISOString()}`);
+    console.log(
+      `Saved token. Expires: ${parsedToken.expiresAtUtc.toISOString()}`,
+    );
     console.log(`Path: ${tokenPath}`);
     return 0;
   }
@@ -93,7 +100,9 @@ async function runTokenCommand(parsedArgs: ParsedArgs): Promise<number> {
   return showUnknownCommand(`token ${sub}`);
 }
 
-async function runStatusCommand(options: Record<string, string | null>): Promise<number> {
+async function runStatusCommand(
+  options: Record<string, string | null>,
+): Promise<number> {
   const proxy = options.proxy ?? "http://localhost:4000";
   const status = await getStatusInfo(proxy);
 
@@ -124,7 +133,10 @@ async function getStatusInfo(proxy: string): Promise<{
   let proxyStatus = "unreachable";
   let proxyDetails = "";
   try {
-    const healthUrl = new URL("healthz", proxy.endsWith("/") ? proxy : `${proxy}/`);
+    const healthUrl = new URL(
+      "healthz",
+      proxy.endsWith("/") ? proxy : `${proxy}/`,
+    );
     const response = await fetch(healthUrl, { method: "GET" });
     proxyStatus = response.ok ? "ok" : "error";
     proxyDetails = `HTTP ${response.status}`;
@@ -135,11 +147,16 @@ async function getStatusInfo(proxy: string): Promise<{
   return { proxy, proxyStatus, proxyDetails, tokenPath, tokenSummary };
 }
 
-async function runChatCommand(options: Record<string, string | null>): Promise<number> {
+async function runChatCommand(
+  options: Record<string, string | null>,
+): Promise<number> {
   const proxy = options.proxy ?? "http://localhost:4000";
   const model = options.model ?? "m365-copilot";
   let oneShotMessage = options.message;
-  const providedToken = firstNonEmpty(options.token, process.env.YARPILOT_TOKEN);
+  const providedToken = firstNonEmpty(
+    options.token,
+    process.env.YARPILOT_TOKEN,
+  );
 
   const tokenPath = await getTokenPath();
   const cachedToken = await loadToken(tokenPath);
@@ -197,12 +214,26 @@ async function runChatCommand(options: Record<string, string | null>): Promise<n
       }
       continue;
     }
-    if (!token.token.trim() || token.expiresAtUtc.getTime() <= Date.now() + 60_000) {
-      token = await ensureValidToken(await loadToken(tokenPath), tokenPath, null);
+    if (
+      !token.token.trim() ||
+      token.expiresAtUtc.getTime() <= Date.now() + 60_000
+    ) {
+      token = await ensureValidToken(
+        await loadToken(tokenPath),
+        tokenPath,
+        null,
+      );
     }
-    const result = await sendChatTurn(proxy, token.token, model, prompt, conversationId, (delta) => {
-      process.stdout.write(delta);
-    });
+    const result = await sendChatTurn(
+      proxy,
+      token.token,
+      model,
+      prompt,
+      conversationId,
+      (delta) => {
+        process.stdout.write(delta);
+      },
+    );
     process.stdout.write("\n");
     if (result.errorMessage) {
       console.error(`Error: ${result.errorMessage}`);
@@ -224,7 +255,10 @@ async function runChatTui(
   tokenPath: string,
   initialToken: { token: string; expiresAtUtc: Date },
 ): Promise<number> {
-  const renderer = await createCliRenderer({ exitOnCtrlC: false, useMouse: false });
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: false,
+    useMouse: false,
+  });
   const root = new BoxRenderable(renderer, {
     width: "100%",
     height: "100%",
@@ -320,17 +354,31 @@ async function runChatTui(
       return;
     }
 
-    if (!token.token.trim() || token.expiresAtUtc.getTime() <= Date.now() + 60_000) {
-      token = await ensureValidToken(await loadToken(tokenPath), tokenPath, null);
+    if (
+      !token.token.trim() ||
+      token.expiresAtUtc.getTime() <= Date.now() + 60_000
+    ) {
+      token = await ensureValidToken(
+        await loadToken(tokenPath),
+        tokenPath,
+        null,
+      );
     }
 
     busy = true;
     appendOutput(`\nYou: ${prompt}\nCopilot: `);
     setStatus("Waiting for response...");
 
-    const result = await sendChatTurn(proxy, token.token, model, prompt, conversationId, (delta) => {
-      appendOutput(delta);
-    });
+    const result = await sendChatTurn(
+      proxy,
+      token.token,
+      model,
+      prompt,
+      conversationId,
+      (delta) => {
+        appendOutput(delta);
+      },
+    );
 
     appendOutput("\n");
     if (result.errorMessage) {
@@ -396,7 +444,9 @@ async function handleSlashCommand(
     try {
       const parsedToken = await promptForTokenInteractive();
       await saveToken(tokenPath, parsedToken.token, parsedToken.expiresAtUtc);
-      writeLine(`Saved token. Expires: ${parsedToken.expiresAtUtc.toISOString()}`);
+      writeLine(
+        `Saved token. Expires: ${parsedToken.expiresAtUtc.toISOString()}`,
+      );
       setStatus?.("Token updated.");
       return { didExit: false, token: parsedToken };
     } catch (error) {
@@ -423,8 +473,15 @@ async function sendChatTurn(
   prompt: string,
   conversationId: string | null,
   onDelta: (text: string) => void,
-): Promise<{ conversationId: string | null; errorMessage: string | null; isAuthError: boolean }> {
-  const requestUrl = new URL("/v1/chat/completions", proxyBaseUrl.endsWith("/") ? proxyBaseUrl : `${proxyBaseUrl}/`);
+): Promise<{
+  conversationId: string | null;
+  errorMessage: string | null;
+  isAuthError: boolean;
+}> {
+  const requestUrl = new URL(
+    "/v1/chat/completions",
+    proxyBaseUrl.endsWith("/") ? proxyBaseUrl : `${proxyBaseUrl}/`,
+  );
   const headers = new Headers({
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
@@ -457,7 +514,11 @@ async function sendChatTurn(
   }
 
   if (!response.body) {
-    return { conversationId: returnedConversationId, errorMessage: null, isAuthError: false };
+    return {
+      conversationId: returnedConversationId,
+      errorMessage: null,
+      isAuthError: false,
+    };
   }
 
   for await (const event of readSseEvents(response.body)) {
@@ -481,7 +542,11 @@ async function sendChatTurn(
     }
   }
 
-  return { conversationId: returnedConversationId, errorMessage: null, isAuthError: false };
+  return {
+    conversationId: returnedConversationId,
+    errorMessage: null,
+    isAuthError: false,
+  };
 }
 
 function extractDeltaContent(rawChunk: string): string | null {
@@ -536,7 +601,9 @@ function parseArgs(args: string[]): ParsedArgs {
   return { positionals, options };
 }
 
-function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
+function firstNonEmpty(
+  ...values: Array<string | null | undefined>
+): string | null {
   for (const value of values) {
     if (value && value.trim()) {
       return value;
@@ -547,8 +614,7 @@ function firstNonEmpty(...values: Array<string | null | undefined>): string | nu
 
 async function getTokenPath(): Promise<string> {
   const localAppData =
-    process.env.LOCALAPPDATA ??
-    path.join(os.homedir(), ".local", "share");
+    process.env.LOCALAPPDATA ?? path.join(os.homedir(), ".local", "share");
   const directory = path.join(localAppData, "YarpPilot", "Cli");
   await fs.mkdir(directory, { recursive: true });
   return path.join(directory, "token.json");
@@ -557,7 +623,10 @@ async function getTokenPath(): Promise<string> {
 async function loadToken(filePath: string): Promise<TokenState | null> {
   try {
     const content = await fs.readFile(filePath, "utf8");
-    const parsed = JSON.parse(content) as { token?: string; expiresAtUtc?: string };
+    const parsed = JSON.parse(content) as {
+      token?: string;
+      expiresAtUtc?: string;
+    };
     if (!parsed.token?.trim() || !parsed.expiresAtUtc?.trim()) {
       return null;
     }
@@ -571,7 +640,11 @@ async function loadToken(filePath: string): Promise<TokenState | null> {
   }
 }
 
-async function saveToken(filePath: string, token: string, expiresAtUtc: Date): Promise<void> {
+async function saveToken(
+  filePath: string,
+  token: string,
+  expiresAtUtc: Date,
+): Promise<void> {
   await fs.writeFile(
     filePath,
     JSON.stringify(
@@ -630,22 +703,36 @@ async function ensureValidToken(
   return prompted;
 }
 
-function parseTokenOrThrow(rawToken: string): { token: string; expiresAtUtc: Date } {
+function parseTokenOrThrow(rawToken: string): {
+  token: string;
+  expiresAtUtc: Date;
+} {
   const normalized = normalizeToken(rawToken);
   if (!normalized) {
     throw new Error("Token cannot be empty.");
   }
-  const expiresAtUtc = tryGetJwtExpiry(normalized) ?? new Date(Date.now() + 60 * 60 * 1000);
+  const expiresAtUtc =
+    tryGetJwtExpiry(normalized) ?? new Date(Date.now() + 60 * 60 * 1000);
   return { token: normalized, expiresAtUtc };
 }
 
-async function promptForTokenInteractive(): Promise<{ token: string; expiresAtUtc: Date }> {
+async function promptForTokenInteractive(): Promise<{
+  token: string;
+  expiresAtUtc: Date;
+}> {
   if (!process.stdin.isTTY) {
-    throw new Error("No valid cached token and no interactive terminal. Pass --token or set YARPILOT_TOKEN.");
+    throw new Error(
+      "No valid cached token and no interactive terminal. Pass --token or set YARPILOT_TOKEN.",
+    );
   }
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
   try {
-    const raw = await rl.question("Paste Microsoft Graph/Substrate bearer token: ");
+    const raw = await rl.question(
+      "Paste Microsoft Graph/Substrate bearer token: ",
+    );
     return parseTokenOrThrow(raw);
   } finally {
     rl.close();
@@ -668,7 +755,10 @@ function tryGetJwtExpiry(token: string): Date | null {
     return null;
   }
   try {
-    const payload = Buffer.from(base64UrlNormalize(parts[1]), "base64").toString("utf8");
+    const payload = Buffer.from(
+      base64UrlNormalize(parts[1]),
+      "base64",
+    ).toString("utf8");
     const parsed = JSON.parse(payload) as { exp?: number | string };
     const expRaw = parsed.exp;
     const exp =
