@@ -21,6 +21,18 @@ bun install
 bun run start:proxy
 ```
 
+To enable debug markdown logs (requires `debugPath` in config):
+
+```bash
+bun run start:proxy -- --debug
+```
+
+You can also pass an explicit value:
+
+```bash
+bun run start:proxy -- --debug=false
+```
+
 Default listen URL is `http://localhost:4000`.
 
 Configuration is loaded from `config.json` (and `config.{env}.json` when `NODE_ENV` is set).

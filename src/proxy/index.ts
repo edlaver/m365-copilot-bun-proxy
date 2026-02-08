@@ -1,3 +1,4 @@
+import { parseArgs } from "util";
 import { CopilotGraphClient, CopilotSubstrateClient } from "./clients";
 import { loadWrapperOptions } from "./config";
 import { ConversationStore } from "./conversation-store";
@@ -6,7 +7,8 @@ import { createProxyApp } from "./server";
 import { parseListenUrl } from "./utils";
 
 const options = await loadWrapperOptions(process.cwd());
-const debugLogger = new DebugMarkdownLogger(options);
+const debugEnabled = parseDebugFlag();
+const debugLogger = new DebugMarkdownLogger(options, debugEnabled);
 const graphClient = new CopilotGraphClient(options, debugLogger);
 const substrateClient = new CopilotSubstrateClient(options, debugLogger);
 const conversationStore = new ConversationStore(options);
@@ -29,3 +31,19 @@ const server = Bun.serve({
 console.log(
   `m365-copilot-bun-proxy listening on http://${server.hostname}:${server.port} (from ${options.listenUrl})`,
 );
+
+function parseDebugFlag(): boolean {
+  const { values } = parseArgs({
+    args: Bun.argv,
+    options: {
+      debug: {
+        type: "boolean",
+        short: "d",
+      },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+
+  return values.debug ?? false;
+}

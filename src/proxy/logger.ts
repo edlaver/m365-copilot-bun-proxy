@@ -6,7 +6,10 @@ import { tryPrettyJson } from "./utils";
 export class DebugMarkdownLogger {
   private sequence = 0;
 
-  constructor(private readonly options: WrapperOptions) {}
+  constructor(
+    private readonly options: WrapperOptions,
+    private readonly isEnabled: boolean,
+  ) {}
 
   async logIncomingRequest(
     request: Request,
@@ -100,7 +103,11 @@ export class DebugMarkdownLogger {
     body: string | null,
     suffix: string,
   ): Promise<void> {
-    if (!this.options.debugPath || !this.options.debugPath.trim()) {
+    if (
+      !this.isEnabled ||
+      !this.options.debugPath ||
+      !this.options.debugPath.trim()
+    ) {
       return;
     }
 
