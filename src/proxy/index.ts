@@ -1,4 +1,5 @@
 import { parseArgs } from "util";
+import path from "node:path";
 import { CopilotGraphClient, CopilotSubstrateClient } from "./clients";
 import { loadWrapperOptions } from "./config";
 import { ConversationStore } from "./conversation-store";
@@ -22,6 +23,10 @@ const app = createProxyApp({
 });
 
 const listen = parseListenUrl(options.listenUrl);
+const debugLogPath =
+  debugEnabled && options.debugPath?.trim()
+    ? path.resolve(options.debugPath)
+    : null;
 const server = Bun.serve({
   hostname: listen.hostname,
   port: listen.port,
@@ -30,6 +35,11 @@ const server = Bun.serve({
 
 console.log(
   `m365-copilot-bun-proxy listening on http://${server.hostname}:${server.port} (from ${options.listenUrl})`,
+);
+console.log(
+  debugEnabled
+    ? `Debugging: enabled (logs at ${debugLogPath})`
+    : "Debugging: disabled",
 );
 
 function parseDebugFlag(): boolean {
