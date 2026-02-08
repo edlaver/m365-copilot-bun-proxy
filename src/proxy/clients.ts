@@ -257,12 +257,13 @@ export class CopilotSubstrateClient {
     }
 
     const transcript: string[] = [];
+    const receiver = createWebSocketReceiver(ws);
     try {
       await sendFrame(ws, requestUri, this.logger, {
         protocol: "json",
         version: 1,
       });
-      const handshakePayload = await receiveMessage(ws, timeoutMs);
+      const handshakePayload = await receiver.next(timeoutMs);
       if (handshakePayload === null) {
         return buildFailure(
           502,
@@ -309,7 +310,7 @@ export class CopilotSubstrateClient {
       let completed = false;
 
       while (!completed && ws.readyState === WebSocket.OPEN) {
-        const payload = await receiveMessage(ws, timeoutMs);
+        const payload = await receiver.next(timeoutMs);
         if (payload === null) {
           break;
         }
@@ -424,6 +425,7 @@ export class CopilotSubstrateClient {
         `Unexpected Substrate websocket failure. ${message}`,
       );
     } finally {
+      receiver.dispose();
       try {
         ws.close();
       } catch {
@@ -698,52 +700,104 @@ async function sendFrame(
   });
 }
 
-async function receiveMessage(
-  ws: WebSocket,
-  timeoutMs: number,
-): Promise<string | null> {
-  return new Promise<string | null>((resolve) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve(null);
-    }, timeoutMs);
+function createWebSocketReceiver(ws: WebSocket): {
+  next: (timeoutMs: number) => Promise<string | null>;
+  dispose: () => void;
+} {
+  const queue: Array<string | null> = [];
+  const waiters: Array<(value: string | null) => void> = [];
+  let disposed = false;
 
-    const cleanup = () => {
-      clearTimeout(timer);
+  const flush = (value: string | null) => {
+    if (waiters.length > 0) {
+      const waiter = waiters.shift();
+      if (waiter) {
+        waiter(value);
+      }
+      return;
+    }
+    queue.push(value);
+  };
+
+  const onMessage = (data: WebSocket.RawData) => {
+    if (disposed) {
+      return;
+    }
+    if (typeof data === "string") {
+      flush(data);
+      return;
+    }
+    if (Buffer.isBuffer(data)) {
+      flush(data.toString("utf8"));
+      return;
+    }
+    if (Array.isArray(data)) {
+      flush(Buffer.concat(data).toString("utf8"));
+      return;
+    }
+    flush(Buffer.from(data).toString("utf8"));
+  };
+
+  const onClose = () => {
+    if (disposed) {
+      return;
+    }
+    flush(null);
+  };
+
+  const onError = () => {
+    if (disposed) {
+      return;
+    }
+    flush(null);
+  };
+
+  ws.on("message", onMessage);
+  ws.on("close", onClose);
+  ws.on("error", onError);
+
+  return {
+    next: (timeoutMs: number) => {
+      if (queue.length > 0) {
+        return Promise.resolve(queue.shift() ?? null);
+      }
+      if (disposed) {
+        return Promise.resolve(null);
+      }
+      return new Promise<string | null>((resolve) => {
+        const waiter = (value: string | null) => {
+          clearTimeout(timer);
+          const index = waiters.indexOf(waiter);
+          if (index >= 0) {
+            waiters.splice(index, 1);
+          }
+          resolve(value);
+        };
+        const timer = setTimeout(() => {
+          const index = waiters.indexOf(waiter);
+          if (index >= 0) {
+            waiters.splice(index, 1);
+          }
+          resolve(null);
+        }, timeoutMs);
+        waiters.push(waiter);
+      });
+    },
+    dispose: () => {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
       ws.off("message", onMessage);
       ws.off("close", onClose);
       ws.off("error", onError);
-    };
-
-    const onMessage = (data: WebSocket.RawData) => {
-      cleanup();
-      if (typeof data === "string") {
-        resolve(data);
-        return;
+      while (waiters.length > 0) {
+        const waiter = waiters.shift();
+        waiter?.(null);
       }
-      if (Buffer.isBuffer(data)) {
-        resolve(data.toString("utf8"));
-        return;
-      }
-      if (Array.isArray(data)) {
-        resolve(Buffer.concat(data).toString("utf8"));
-        return;
-      }
-      resolve(Buffer.from(data).toString("utf8"));
-    };
-    const onClose = () => {
-      cleanup();
-      resolve(null);
-    };
-    const onError = () => {
-      cleanup();
-      resolve(null);
-    };
-
-    ws.once("message", onMessage);
-    ws.once("close", onClose);
-    ws.once("error", onError);
-  });
+      queue.length = 0;
+    },
+  };
 }
 
 function extractSubstrateAssistantText(envelope: JsonObject): string | null {
