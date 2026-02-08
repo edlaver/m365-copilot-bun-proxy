@@ -4,11 +4,15 @@ export function nowUnix(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-export function normalizeNullableString(value: string | null | undefined): string | null {
+export function normalizeNullableString(
+  value: string | null | undefined,
+): string | null {
   return value && value.trim() ? value.trim() : null;
 }
 
-export function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
+export function firstNonEmpty(
+  ...values: Array<string | null | undefined>
+): string | null {
   for (const value of values) {
     if (value && value.trim()) {
       return value;
@@ -57,7 +61,11 @@ export function deepMerge(target: JsonObject, source: JsonObject): JsonObject {
   return target;
 }
 
-export function setDeepValue(root: JsonObject, pathParts: string[], value: JsonValue): void {
+export function setDeepValue(
+  root: JsonObject,
+  pathParts: string[],
+  value: JsonValue,
+): void {
   let cursor: JsonObject = root;
   for (let index = 0; index < pathParts.length; index++) {
     const part = pathParts[index];
@@ -106,7 +114,9 @@ export function parseEnvValue(raw: string): JsonValue {
   return trimmed;
 }
 
-export function tryParseJsonObject(rawJson: string | null | undefined): JsonObject | null {
+export function tryParseJsonObject(
+  rawJson: string | null | undefined,
+): JsonObject | null {
   if (!rawJson || !rawJson.trim()) {
     return null;
   }
@@ -118,7 +128,9 @@ export function tryParseJsonObject(rawJson: string | null | undefined): JsonObje
   }
 }
 
-export async function tryReadJsonPayload(request: Request): Promise<JsonPayload | null> {
+export async function tryReadJsonPayload(
+  request: Request,
+): Promise<JsonPayload | null> {
   const contentType = request.headers.get("content-type");
   if (!contentType || !contentType.toLowerCase().includes("application/json")) {
     return null;
@@ -210,7 +222,9 @@ export function tryGetDouble(
   return null;
 }
 
-export function normalizeBearerToken(authorizationHeader: string | null | undefined): string | null {
+export function normalizeBearerToken(
+  authorizationHeader: string | null | undefined,
+): string | null {
   if (!authorizationHeader || !authorizationHeader.trim()) {
     return null;
   }
@@ -222,7 +236,9 @@ export function normalizeBearerToken(authorizationHeader: string | null | undefi
   return `Bearer ${trimmed}`;
 }
 
-export function extractBearerToken(authorizationHeader: string | null | undefined): string | null {
+export function extractBearerToken(
+  authorizationHeader: string | null | undefined,
+): string | null {
   const normalized = normalizeBearerToken(authorizationHeader);
   if (!normalized) {
     return null;
@@ -259,7 +275,10 @@ export function tryReadJwtPayload(rawToken: string): JsonObject | null {
   }
 }
 
-export function computeTrailingDelta(alreadyEmitted: string, latestText: string): string {
+export function computeTrailingDelta(
+  alreadyEmitted: string,
+  latestText: string,
+): string {
   if (!latestText) {
     return "";
   }
@@ -274,7 +293,9 @@ export function computeTrailingDelta(alreadyEmitted: string, latestText: string)
     : "";
 }
 
-export function extractGraphErrorMessage(graphBody: string | null | undefined): string | null {
+export function extractGraphErrorMessage(
+  graphBody: string | null | undefined,
+): string | null {
   if (!graphBody || !graphBody.trim()) {
     return null;
   }
@@ -295,7 +316,10 @@ export function extractGraphErrorMessage(graphBody: string | null | undefined): 
   return graphBody.length > 400 ? `${graphBody.slice(0, 400)}...` : graphBody;
 }
 
-export function parseListenUrl(listenUrl: string): { hostname: string; port: number } {
+export function parseListenUrl(listenUrl: string): {
+  hostname: string;
+  port: number;
+} {
   const url = new URL(listenUrl);
   return {
     hostname: url.hostname || "0.0.0.0",
@@ -307,10 +331,19 @@ export function tryPrettyJson(rawPayload: string): string {
   if (!rawPayload.trim()) {
     return "";
   }
+  const trimmed = rawPayload.trim();
+  const cleaned = trimmed.replace(
+    /^[\s\u0000-\u001f]+|[\s\u0000-\u001f]+$/g,
+    "",
+  );
   try {
-    return JSON.stringify(JSON.parse(rawPayload), null, 2);
+    return JSON.stringify(JSON.parse(cleaned), null, 2);
   } catch {
-    return rawPayload;
+    try {
+      return JSON.stringify(JSON.parse(trimmed), null, 2);
+    } catch {
+      return rawPayload;
+    }
   }
 }
 
@@ -361,4 +394,3 @@ export async function* readSseEvents(
     yield { event: eventName, data: dataBuffer.join("\n") };
   }
 }
-

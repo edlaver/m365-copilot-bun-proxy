@@ -84,7 +84,7 @@ export class DebugMarkdownLogger {
     await this.logHttpLike(
       `Substrate WebSocket ${normalizedDirection}`,
       [
-        ["Uri", uri],
+        ["Uri", redactUriTokens(uri)],
         ["Direction", normalizedDirection],
       ],
       [],
@@ -156,4 +156,36 @@ function redactHeaderValue(header: string, value: string): string {
   }
 
   return `Bearer ${prefix}...${suffix}`;
+}
+
+function redactUriTokens(uri: string): string {
+  try {
+    const parsed = new URL(uri);
+    if (parsed.searchParams.has("access_token")) {
+      const token = parsed.searchParams.get("access_token") ?? "";
+      const redacted = redactTokenValue(token);
+      parsed.searchParams.set("access_token", redacted);
+      return parsed.toString();
+    }
+  } catch {
+    // fall through
+  }
+
+  return uri.replace(
+    /(access_token=)([^&]+)/gi,
+    (_match, prefix, token) => `${prefix}${redactTokenValue(String(token))}`,
+  );
+}
+
+function redactTokenValue(token: string): string {
+  const normalized = token.trim();
+  if (!normalized) {
+    return "[redacted]";
+  }
+  const prefix = normalized.slice(0, 4);
+  const suffix = normalized.slice(-3);
+  if (normalized.length <= 8) {
+    return `${prefix}...`;
+  }
+  return `${prefix}...${suffix}`;
 }
