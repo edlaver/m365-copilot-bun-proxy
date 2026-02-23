@@ -10,6 +10,7 @@ import type {
   WrapperOptions,
 } from "./types";
 import {
+  computeTrailingDelta,
   extractBearerToken,
   isJsonObject,
   tryGetString,
@@ -308,6 +309,21 @@ export class CopilotSubstrateClient {
       let resolvedConversationId = conversationId;
       let responseError: string | null = null;
       let completed = false;
+      const logDeltaSource = async (
+        source: "writeAtCursor" | "snapshotText",
+        deltaText: string,
+      ) => {
+        await this.logger.logSubstrateFrame(
+          requestUri.toString(),
+          "delta",
+          JSON.stringify({
+            source,
+            conversationId: resolvedConversationId,
+            deltaLength: deltaText.length,
+            deltaPreview: deltaText.slice(0, 120),
+          }),
+        );
+      };
 
       while (!completed && ws.readyState === WebSocket.OPEN) {
         const payload = await receiver.next(timeoutMs);
@@ -344,16 +360,31 @@ export class CopilotSubstrateClient {
             }
           }
 
+          const deltaText = extractSubstrateDeltaText(json);
+          if (deltaText) {
+            deltaBuilder += deltaText;
+            await logDeltaSource("writeAtCursor", deltaText);
+            if (onStreamUpdate) {
+              await onStreamUpdate({
+                deltaText,
+                conversationId: resolvedConversationId,
+              });
+            }
+          }
+
           const extractedAssistantText = extractSubstrateAssistantText(json);
           if (extractedAssistantText) {
             assistantText = extractedAssistantText;
-          } else {
-            const deltaText = extractSubstrateDeltaText(json);
-            if (deltaText) {
-              deltaBuilder += deltaText;
+            const snapshotDelta = computeTrailingDelta(
+              deltaBuilder,
+              extractedAssistantText,
+            );
+            if (snapshotDelta) {
+              deltaBuilder += snapshotDelta;
+              await logDeltaSource("snapshotText", snapshotDelta);
               if (onStreamUpdate) {
                 await onStreamUpdate({
-                  deltaText,
+                  deltaText: snapshotDelta,
                   conversationId: resolvedConversationId,
                 });
               }
