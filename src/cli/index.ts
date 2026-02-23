@@ -200,7 +200,12 @@ async function runChatCommand(
 
   const tokenPath = await getTokenPath();
   const cachedToken = await loadToken(tokenPath);
-  let token = await ensureValidToken(cachedToken, tokenPath, providedToken);
+  let token = await ensureValidTokenWithAutoFetch(
+    cachedToken,
+    tokenPath,
+    providedToken,
+    "chat startup",
+  );
 
   if (oneShotMessage?.trim()) {
     const oneShotSession: SessionState = {
@@ -217,6 +222,30 @@ async function runChatCommand(
       () => {},
     );
     if (result.errorMessage) {
+      if (result.isAuthError) {
+        console.log(
+          "[token] One-shot request returned auth error. Refreshing token and retrying once...",
+        );
+        token = await ensureValidTokenWithAutoFetch(
+          await loadToken(tokenPath),
+          tokenPath,
+          null,
+          "one-shot authentication failure",
+        );
+        const retryResult = await sendChatTurn(
+          proxy,
+          token.token,
+          model,
+          oneShotMessage,
+          oneShotSession,
+          () => {},
+        );
+        if (retryResult.errorMessage) {
+          console.error(`Error: ${retryResult.errorMessage}`);
+          return 1;
+        }
+        return 0;
+      }
       console.error(`Error: ${result.errorMessage}`);
       return 1;
     }
@@ -269,10 +298,11 @@ async function runChatCommand(
       !token.token.trim() ||
       token.expiresAtUtc.getTime() <= Date.now() + 60_000
     ) {
-      token = await ensureValidToken(
+      token = await ensureValidTokenWithAutoFetch(
         await loadToken(tokenPath),
         tokenPath,
         null,
+        "token expired",
       );
     }
     const result = await sendChatTurn(
@@ -289,8 +319,16 @@ async function runChatCommand(
     if (result.errorMessage) {
       console.error(`Error: ${result.errorMessage}`);
       if (result.isAuthError) {
-        token = await promptForTokenInteractive();
-        await saveToken(tokenPath, token.token, token.expiresAtUtc);
+        try {
+          token = await ensureValidTokenWithAutoFetch(
+            await loadToken(tokenPath),
+            tokenPath,
+            null,
+            "authentication failure",
+          );
+        } catch (error) {
+          console.error(`Token refresh failed: ${String(error)}`);
+        }
       }
     } else {
       session.conversationId = result.conversationId ?? session.conversationId;
@@ -421,10 +459,11 @@ async function runChatTui(
       !token.token.trim() ||
       token.expiresAtUtc.getTime() <= Date.now() + 60_000
     ) {
-      token = await ensureValidToken(
+      token = await ensureValidTokenWithAutoFetch(
         await loadToken(tokenPath),
         tokenPath,
         null,
+        "token expired",
       );
     }
 
@@ -449,11 +488,15 @@ async function runChatTui(
       setStatus("Request failed.");
       if (result.isAuthError) {
         try {
-          token = await promptForTokenInteractive();
-          await saveToken(tokenPath, token.token, token.expiresAtUtc);
+          token = await ensureValidTokenWithAutoFetch(
+            await loadToken(tokenPath),
+            tokenPath,
+            null,
+            "authentication failure",
+          );
           setStatus("Token refreshed.");
         } catch (error) {
-          appendOutput(`Token prompt failed: ${String(error)}\n`);
+          appendOutput(`Token refresh failed: ${String(error)}\n`);
         }
       }
     } else {
@@ -835,6 +878,62 @@ function extractErrorMessage(rawJson: string): string | null {
   }
   const direct = json?.message;
   return typeof direct === "string" && direct.trim() ? direct.trim() : null;
+}
+
+async function ensureValidTokenWithAutoFetch(
+  tokenState: TokenState | null,
+  tokenPath: string,
+  providedToken: string | null,
+  reason: string,
+): Promise<{ token: string; expiresAtUtc: Date }> {
+  if (providedToken?.trim()) {
+    return ensureValidToken(tokenState, tokenPath, providedToken);
+  }
+  if (isTokenStateValid(tokenState)) {
+    return {
+      token: tokenState.token,
+      expiresAtUtc: new Date(tokenState.expiresAtUtc),
+    };
+  }
+
+  const storageStatePath = await getBrowserStatePath();
+  console.log(
+    `[token] No valid token available (${reason}). Trying automatic token fetch...`,
+  );
+  console.log(`[token] Browser state path: ${storageStatePath}`);
+
+  try {
+    await fetchTokenWithPlaywright(tokenPath, storageStatePath);
+    const fetchedTokenState = await loadToken(tokenPath);
+    if (isTokenStateValid(fetchedTokenState)) {
+      console.log("[token] Automatic token fetch succeeded.");
+      return {
+        token: fetchedTokenState.token,
+        expiresAtUtc: new Date(fetchedTokenState.expiresAtUtc),
+      };
+    }
+    console.log(
+      "[token] Automatic token fetch completed but token is still missing/expired.",
+    );
+  } catch (error) {
+    console.log(`[token] Automatic token fetch failed: ${formatError(error)}`);
+  }
+
+  return ensureValidToken(await loadToken(tokenPath), tokenPath, null);
+}
+
+function isTokenStateValid(tokenState: TokenState | null): tokenState is TokenState {
+  if (!tokenState?.token?.trim()) {
+    return false;
+  }
+  const expiresAtUtc = new Date(tokenState.expiresAtUtc);
+  return expiresAtUtc.getTime() > Date.now() + 60_000;
+}
+
+function formatError(error: unknown): string {
+  return String(error instanceof Error ? error.message ?? error : error)
+    .replace(/\x1b\[[0-9;]*[mGKHFABCDJ]/g, "")
+    .trim();
 }
 
 function parseArgs(args: string[]): ParsedArgs {
