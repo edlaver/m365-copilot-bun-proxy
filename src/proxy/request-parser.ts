@@ -9,6 +9,7 @@ import {
   type OpenAiToolDefinition,
   type OpenAiTooling,
   type ParsedOpenAiRequest,
+  type ParsedResponsesRequest,
   type WrapperOptions,
 } from "./types";
 import {
@@ -231,6 +232,59 @@ export function tryParseOpenAiRequest(
   return { ok: true, request: parsedRequest };
 }
 
+export function tryParseResponsesRequest(
+  requestJson: JsonObject,
+  options: WrapperOptions,
+):
+  | { ok: true; request: ParsedResponsesRequest }
+  | { ok: false; error: string } {
+  const normalized = cloneJsonValue(requestJson);
+  const normalizedInput = normalizeResponsesInput(requestJson.input);
+  if (normalizedInput.messages.length === 0) {
+    return {
+      ok: false,
+      error:
+        "The 'input' field is required and must contain at least one supported message item.",
+    };
+  }
+
+  normalized.messages = normalizedInput.messages;
+
+  if (normalized.response_format === undefined) {
+    const mappedResponseFormat = mapResponsesTextFormat(requestJson);
+    if (mappedResponseFormat) {
+      normalized.response_format = mappedResponseFormat;
+    }
+  }
+
+  if (normalized.reasoning_effort === undefined) {
+    const reasoningEffort = mapResponsesReasoningEffort(requestJson);
+    if (reasoningEffort) {
+      normalized.reasoning_effort = reasoningEffort;
+    }
+  }
+
+  const instructions = tryGetString(requestJson, "instructions");
+  if (instructions && !tryGetString(normalized, "m365_system_prompt")) {
+    normalized.m365_system_prompt = instructions;
+  }
+
+  const parsedBase = tryParseOpenAiRequest(normalized, options);
+  if (!parsedBase.ok) {
+    return parsedBase;
+  }
+
+  return {
+    ok: true,
+    request: {
+      base: parsedBase.request,
+      previousResponseId: tryGetString(requestJson, "previous_response_id"),
+      inputItemsForStorage: normalizedInput.inputItemsForStorage,
+      instructions,
+    },
+  };
+}
+
 function resolvePrompt(
   messages: { role: string; content: string; index: number }[],
 ): { role: string; content: string; index: number } | null {
@@ -240,6 +294,187 @@ function resolvePrompt(
     }
   }
   return messages.at(-1) ?? null;
+}
+
+function normalizeResponsesInput(inputNode: JsonValue | undefined): {
+  messages: JsonObject[];
+  inputItemsForStorage: JsonValue[];
+} {
+  if (typeof inputNode === "string" && inputNode.trim()) {
+    return {
+      messages: [{ role: "user", content: inputNode.trim() }],
+      inputItemsForStorage: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: inputNode.trim() }],
+        },
+      ],
+    };
+  }
+
+  const sourceItems: JsonValue[] = Array.isArray(inputNode)
+    ? inputNode
+    : inputNode !== undefined && inputNode !== null
+      ? [inputNode]
+      : [];
+  const messages: JsonObject[] = [];
+  const inputItemsForStorage: JsonValue[] = [];
+
+  for (const item of sourceItems) {
+    if (typeof item === "string") {
+      if (!item.trim()) {
+        continue;
+      }
+      messages.push({ role: "user", content: item.trim() });
+      inputItemsForStorage.push({
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: item.trim() }],
+      });
+      continue;
+    }
+
+    if (!isJsonObject(item)) {
+      continue;
+    }
+
+    inputItemsForStorage.push(cloneJsonValue(item));
+    const type = (tryGetString(item, "type") ?? "message").toLowerCase();
+    if (type === "message") {
+      const role = (tryGetString(item, "role") ?? "user").toLowerCase();
+      const message: JsonObject = { role };
+      if (item.content !== undefined) {
+        message.content = cloneJsonValue(item.content);
+      } else {
+        const text =
+          tryGetString(item, "text") ??
+          tryGetString(item, "input_text") ??
+          tryGetString(item, "output_text");
+        if (text) {
+          message.content = text;
+        }
+      }
+      messages.push(message);
+      continue;
+    }
+
+    if (type === "function_call_output") {
+      const message: JsonObject = {
+        role: "tool",
+        content: stringifyJsonValue(item.output),
+      };
+      const toolName = tryGetString(item, "name");
+      if (toolName) {
+        message.name = toolName;
+      }
+      const toolCallId =
+        tryGetString(item, "call_id") ?? tryGetString(item, "tool_call_id");
+      if (toolCallId) {
+        message.tool_call_id = toolCallId;
+      }
+      messages.push(message);
+      continue;
+    }
+
+    if (type === "function_call") {
+      const functionName = tryGetString(item, "name");
+      if (!functionName) {
+        continue;
+      }
+      const functionArguments =
+        normalizeFunctionArguments(item.arguments) ?? "{}";
+      const toolCall: JsonObject = {
+        id:
+          tryGetString(item, "call_id") ??
+          tryGetString(item, "id") ??
+          `call_${messages.length + 1}`,
+        type: "function",
+        function: {
+          name: functionName,
+          arguments: functionArguments,
+        },
+      };
+      messages.push({
+        role: "assistant",
+        content: null,
+        tool_calls: [toolCall],
+      });
+    }
+  }
+
+  return { messages, inputItemsForStorage };
+}
+
+function mapResponsesTextFormat(requestJson: JsonObject): JsonObject | null {
+  const text = requestJson.text;
+  if (!isJsonObject(text) || !isJsonObject(text.format)) {
+    return null;
+  }
+  const format = text.format;
+  const type = tryGetString(format, "type");
+  if (!type) {
+    return null;
+  }
+  const normalizedType = type.toLowerCase();
+  if (normalizedType === ResponseFormatTypes.JsonObject) {
+    return { type: ResponseFormatTypes.JsonObject };
+  }
+  if (normalizedType !== ResponseFormatTypes.JsonSchema) {
+    return null;
+  }
+
+  if (isJsonObject(format.json_schema)) {
+    return {
+      type: ResponseFormatTypes.JsonSchema,
+      json_schema: cloneJsonValue(format.json_schema),
+    };
+  }
+
+  const jsonSchema: JsonObject = {};
+  const name = tryGetString(format, "name");
+  if (name) {
+    jsonSchema.name = name;
+  }
+  if (isJsonObject(format.schema)) {
+    jsonSchema.schema = cloneJsonValue(format.schema);
+  }
+
+  return {
+    type: ResponseFormatTypes.JsonSchema,
+    json_schema: jsonSchema,
+  };
+}
+
+function mapResponsesReasoningEffort(requestJson: JsonObject): string | null {
+  const reasoning = requestJson.reasoning;
+  if (!isJsonObject(reasoning)) {
+    return null;
+  }
+  return tryGetString(reasoning, "effort");
+}
+
+function stringifyJsonValue(value: JsonValue | undefined): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === undefined || value === null) {
+    return "";
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
+function normalizeFunctionArguments(value: JsonValue | undefined): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return value.trim() ? value : "{}";
+  }
+  return JSON.stringify(value);
 }
 
 function extractMessageContent(

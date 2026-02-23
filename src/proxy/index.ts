@@ -4,6 +4,7 @@ import { CopilotGraphClient, CopilotSubstrateClient } from "./clients";
 import { loadWrapperOptions } from "./config";
 import { ConversationStore } from "./conversation-store";
 import { DebugMarkdownLogger } from "./logger";
+import { ResponseStore } from "./response-store";
 import { createProxyApp } from "./server";
 import { parseListenUrl } from "./utils";
 
@@ -13,6 +14,7 @@ const debugLogger = new DebugMarkdownLogger(options, debugEnabled);
 const graphClient = new CopilotGraphClient(options, debugLogger);
 const substrateClient = new CopilotSubstrateClient(options, debugLogger);
 const conversationStore = new ConversationStore(options);
+const responseStore = new ResponseStore(options);
 
 const app = createProxyApp({
   options,
@@ -20,6 +22,7 @@ const app = createProxyApp({
   graphClient,
   substrateClient,
   conversationStore,
+  responseStore,
 });
 
 const listen = parseListenUrl(options.listenUrl);

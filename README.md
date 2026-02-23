@@ -51,6 +51,59 @@ To override nested values, use double underscores for each path segment, for exa
 CONFIG__substrate__hubPath=wss://substrate.office.com/m365Copilot/Chathub bun run start:proxy
 ```
 
+## API endpoints
+
+- `POST /v1/chat/completions`
+- `POST /openai/v1/chat/completions`
+- `POST /v1/responses`
+- `POST /openai/v1/responses`
+- `GET /v1/responses`
+- `GET /openai/v1/responses`
+- `GET /v1/responses/{response_id}`
+- `GET /openai/v1/responses/{response_id}`
+- `DELETE /v1/responses/{response_id}`
+- `DELETE /openai/v1/responses/{response_id}`
+
+## Responses API usage
+
+Create response:
+
+```bash
+curl -s http://localhost:4000/v1/responses \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "x-m365-transport: substrate" \
+  -d '{
+    "model": "m365-copilot",
+    "input": "Write a TypeScript function that validates UUIDs."
+  }'
+```
+
+Continue a conversation using `previous_response_id`:
+
+```bash
+curl -s http://localhost:4000/v1/responses \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "x-m365-transport: substrate" \
+  -d '{
+    "model": "m365-copilot",
+    "previous_response_id": "resp_abc123",
+    "input": "Now add tests."
+  }'
+```
+
+Streaming (`stream: true`) emits SSE events:
+
+- `response.created`
+- `response.in_progress`
+- `response.output_item.added`
+- `response.output_text.delta`
+- `response.output_text.done`
+- `response.output_item.done`
+- `response.completed`
+- `error` (SSE error event on stream failure)
+
 ## Build executable
 
 ```bash

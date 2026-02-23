@@ -72,6 +72,13 @@ export type ParsedOpenAiRequest = {
   temperature: number | null;
 };
 
+export type ParsedResponsesRequest = {
+  base: ParsedOpenAiRequest;
+  previousResponseId: string | null;
+  inputItemsForStorage: JsonValue[];
+  instructions: string | null;
+};
+
 export type JsonPayload = {
   json: JsonObject;
   rawText: string;
@@ -91,6 +98,14 @@ export type ChatResult = {
   rawBody: string;
   assistantText: string | null;
   conversationId: string | null;
+};
+
+export type StoredOpenAiResponseRecord = {
+  responseId: string;
+  createdAtUnix: number;
+  response: JsonObject;
+  conversationId: string | null;
+  expiresAtUtc: number;
 };
 
 export type SubstrateStreamUpdate = {

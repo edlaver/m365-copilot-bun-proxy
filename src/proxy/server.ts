@@ -18,6 +18,22 @@ import {
   extractCopilotConversationIdFromStream,
   requiresBufferedAssistantResponse,
 } from "./openai";
+import { ResponseStore } from "./response-store";
+import {
+  buildFunctionCallOutputItems,
+  buildMessageOutputItem,
+  buildOpenAiResponseFromAssistant,
+  buildOpenAiResponseObject,
+  buildResponseCompletedEvent,
+  buildResponseCreatedEvent,
+  buildResponseInProgressEvent,
+  buildResponseOutputItemAddedEvent,
+  buildResponseOutputItemDoneEvent,
+  buildResponseOutputTextDeltaEvent,
+  buildResponseOutputTextDoneEvent,
+  createOpenAiOutputItemId,
+  createOpenAiResponseId,
+} from "./responses-api";
 import {
   buildCopilotRequestPayload,
   isSupportedTransport,
@@ -25,11 +41,14 @@ import {
   scopeConversationKey,
   selectConversation,
   tryParseOpenAiRequest,
+  tryParseResponsesRequest,
 } from "./request-parser";
 import {
   TransportNames,
+  type JsonObject,
   type ChatResult,
   type ParsedOpenAiRequest,
+  type ParsedResponsesRequest,
   type WrapperOptions,
 } from "./types";
 import {
@@ -46,6 +65,7 @@ type Services = {
   graphClient: CopilotGraphClient;
   substrateClient: CopilotSubstrateClient;
   conversationStore: ConversationStore;
+  responseStore: ResponseStore;
 };
 
 export function createProxyApp(services: Services): Hono {
@@ -72,6 +92,26 @@ export function createProxyApp(services: Services): Hono {
   app.post("/v1/chat/completions", (c) => handleChat(c.req.raw, services));
   app.post("/openai/v1/chat/completions", (c) =>
     handleChat(c.req.raw, services),
+  );
+  app.post("/v1/responses", (c) => handleResponsesCreate(c.req.raw, services));
+  app.post("/openai/v1/responses", (c) =>
+    handleResponsesCreate(c.req.raw, services),
+  );
+  app.get("/v1/responses", (c) => handleResponsesList(c.req.raw, services));
+  app.get("/openai/v1/responses", (c) =>
+    handleResponsesList(c.req.raw, services),
+  );
+  app.get("/v1/responses/:responseId", (c) =>
+    handleResponsesRetrieve(c.req.raw, services, c.req.param("responseId")),
+  );
+  app.get("/openai/v1/responses/:responseId", (c) =>
+    handleResponsesRetrieve(c.req.raw, services, c.req.param("responseId")),
+  );
+  app.delete("/v1/responses/:responseId", (c) =>
+    handleResponsesDelete(c.req.raw, services, c.req.param("responseId")),
+  );
+  app.delete("/openai/v1/responses/:responseId", (c) =>
+    handleResponsesDelete(c.req.raw, services, c.req.param("responseId")),
   );
   return app;
 }
@@ -189,7 +229,9 @@ async function handleChat(
         conversationStore.set(scopedConversationKey, conversationId);
       }
     }
-  } else if (scopedConversationKey) {
+  }
+
+  if (conversationId && scopedConversationKey) {
     conversationStore.set(scopedConversationKey, conversationId);
   }
 
@@ -353,6 +395,847 @@ async function handleChat(
   responseHeaders.set("content-type", "application/json");
   await debugLogger.logOutgoingResponse(200, responseHeaders.entries(), body);
   return new Response(body, { status: 200, headers: responseHeaders });
+}
+
+async function handleResponsesCreate(
+  request: Request,
+  services: Services,
+): Promise<Response> {
+  const {
+    options,
+    graphClient,
+    substrateClient,
+    conversationStore,
+    responseStore,
+    debugLogger,
+  } = services;
+  const authorizationHeader = normalizeBearerToken(
+    request.headers.get("authorization"),
+  );
+  if (!authorizationHeader) {
+    return writeOpenAiError(
+      services,
+      401,
+      "Missing Authorization Bearer token.",
+      "invalid_request_error",
+      "missing_authorization",
+    );
+  }
+
+  const payload = await tryReadJsonPayload(request.clone());
+  await debugLogger.logIncomingRequest(request, payload?.rawText ?? null);
+  if (!payload) {
+    return writeOpenAiError(
+      services,
+      400,
+      "Request body must be valid JSON.",
+      "invalid_request_error",
+      "invalid_json",
+    );
+  }
+
+  const parsed = tryParseResponsesRequest(payload.json, options);
+  if (!parsed.ok) {
+    return writeOpenAiError(
+      services,
+      400,
+      parsed.error,
+      "invalid_request_error",
+      "invalid_request",
+    );
+  }
+  const parsedRequest = parsed.request;
+  const baseRequest = parsedRequest.base;
+
+  const selectedTransport = resolveTransport(request, payload.json, options);
+  if (!isSupportedTransport(selectedTransport)) {
+    return writeOpenAiError(
+      services,
+      400,
+      `Unsupported transport '${selectedTransport}'. Supported values: '${TransportNames.Graph}', '${TransportNames.Substrate}'.`,
+      "invalid_request_error",
+      "invalid_transport",
+    );
+  }
+
+  const responseHeaders = new Headers({
+    "x-m365-transport": selectedTransport,
+  });
+  const conversationSelection = selectConversation(
+    request,
+    payload.json,
+    baseRequest.userKey,
+  );
+  const scopedConversationKey = scopeConversationKey(
+    conversationSelection.conversationKey,
+    selectedTransport,
+  );
+
+  let conversationId = conversationSelection.conversationId;
+  let createdConversation = false;
+
+  if (!conversationId && parsedRequest.previousResponseId) {
+    const previousConversationId = responseStore.tryGetConversationLink(
+      parsedRequest.previousResponseId,
+    );
+    if (!previousConversationId) {
+      return writeOpenAiError(
+        services,
+        400,
+        `Unknown previous_response_id '${parsedRequest.previousResponseId}'.`,
+        "invalid_request_error",
+        "invalid_previous_response_id",
+      );
+    }
+    conversationId = previousConversationId;
+  }
+
+  if (!conversationId) {
+    if (!conversationSelection.forceNewConversation && scopedConversationKey) {
+      const existing = conversationStore.tryGet(scopedConversationKey);
+      if (existing) {
+        conversationId = existing;
+      }
+    }
+
+    if (!conversationId) {
+      const createResult =
+        selectedTransport === TransportNames.Substrate
+          ? substrateClient.createConversation()
+          : await graphClient.createConversation(authorizationHeader);
+
+      if (!createResult.isSuccess || !createResult.conversationId) {
+        const fallbackMessage =
+          selectedTransport === TransportNames.Substrate
+            ? "Unable to initialize Substrate conversation."
+            : "Unable to create Microsoft 365 Copilot conversation.";
+        const code =
+          selectedTransport === TransportNames.Substrate
+            ? "substrate_error"
+            : "graph_error";
+        return writeFromUpstreamFailure(
+          services,
+          createResult.statusCode,
+          createResult.rawBody,
+          fallbackMessage,
+          code,
+        );
+      }
+
+      conversationId = createResult.conversationId;
+      createdConversation = true;
+      if (scopedConversationKey) {
+        conversationStore.set(scopedConversationKey, conversationId);
+      }
+    }
+  }
+
+  if (conversationId && scopedConversationKey) {
+    conversationStore.set(scopedConversationKey, conversationId);
+  }
+
+  if (!conversationId) {
+    return writeOpenAiError(
+      services,
+      500,
+      "Conversation ID resolution failed.",
+      "server_error",
+      "conversation_id_missing",
+    );
+  }
+
+  responseHeaders.set("x-m365-conversation-id", conversationId);
+  if (createdConversation) {
+    responseHeaders.set("x-m365-conversation-created", "true");
+  }
+
+  const graphPayload = buildCopilotRequestPayload(baseRequest);
+  const shouldBufferAssistant = requiresBufferedAssistantResponse(baseRequest);
+
+  const executeChatTurn = async (): Promise<ChatResult> => {
+    if (selectedTransport === TransportNames.Substrate) {
+      return substrateClient.chat(
+        authorizationHeader,
+        conversationId!,
+        baseRequest,
+        createdConversation,
+      );
+    }
+    return graphClient.chat(authorizationHeader, conversationId!, graphPayload);
+  };
+
+  if (baseRequest.stream) {
+    if (shouldBufferAssistant) {
+      const buffered = await executeChatTurn();
+      if (!buffered.isSuccess) {
+        return writeFromUpstreamFailure(
+          services,
+          buffered.statusCode,
+          buffered.rawBody,
+          selectedTransport === TransportNames.Substrate
+            ? "Substrate chat request failed."
+            : "Microsoft Graph chat request failed.",
+          selectedTransport === TransportNames.Substrate
+            ? "substrate_error"
+            : "graph_error",
+        );
+      }
+
+      if (buffered.conversationId) {
+        conversationId = buffered.conversationId;
+        responseHeaders.set("x-m365-conversation-id", conversationId);
+        if (scopedConversationKey) {
+          conversationStore.set(scopedConversationKey, conversationId);
+        }
+      }
+
+      const assistantText =
+        buffered.assistantText ??
+        extractCopilotAssistantText(
+          buffered.responseJson,
+          baseRequest.promptText,
+        ) ??
+        "";
+      const assistantResponse = buildAssistantResponse(baseRequest, assistantText);
+      return buildBufferedResponsesStreamResponse(
+        services,
+        parsedRequest,
+        conversationId,
+        assistantResponse,
+        responseHeaders,
+      );
+    }
+
+    if (selectedTransport === TransportNames.Graph) {
+      const graphResponse = await graphClient.chatOverStream(
+        authorizationHeader,
+        conversationId,
+        graphPayload,
+      );
+      if (!graphResponse.ok) {
+        return writeFromUpstreamFailure(
+          services,
+          graphResponse.status,
+          await graphResponse.text(),
+          "Microsoft Graph chatOverStream request failed.",
+          "graph_error",
+        );
+      }
+      return transformGraphStreamToResponses(
+        services,
+        graphResponse,
+        parsedRequest,
+        conversationId,
+        scopedConversationKey,
+        responseHeaders,
+      );
+    }
+
+    return streamSubstrateAsResponses(
+      services,
+      authorizationHeader,
+      conversationId,
+      parsedRequest,
+      createdConversation,
+      scopedConversationKey,
+      responseHeaders,
+    );
+  }
+
+  const chatResponse = await executeChatTurn();
+  if (!chatResponse.isSuccess) {
+    return writeFromUpstreamFailure(
+      services,
+      chatResponse.statusCode,
+      chatResponse.rawBody,
+      selectedTransport === TransportNames.Substrate
+        ? "Substrate chat request failed."
+        : "Microsoft Graph chat request failed.",
+      selectedTransport === TransportNames.Substrate
+        ? "substrate_error"
+        : "graph_error",
+    );
+  }
+
+  if (chatResponse.conversationId) {
+    conversationId = chatResponse.conversationId;
+    responseHeaders.set("x-m365-conversation-id", conversationId);
+    if (scopedConversationKey) {
+      conversationStore.set(scopedConversationKey, conversationId);
+    }
+  }
+
+  const assistantText =
+    chatResponse.assistantText ??
+    extractCopilotAssistantText(chatResponse.responseJson, baseRequest.promptText) ??
+    "";
+  const assistantResponse = buildAssistantResponse(baseRequest, assistantText);
+  const responseId = createOpenAiResponseId();
+  const createdAt = nowUnix();
+  const responseBody = buildOpenAiResponseFromAssistant(
+    responseId,
+    createdAt,
+    baseRequest.model,
+    "completed",
+    parsedRequest,
+    assistantResponse,
+    options.includeConversationIdInResponseBody,
+    conversationId,
+  );
+  responseStore.set(responseId, responseBody, conversationId);
+
+  responseHeaders.set("content-type", "application/json");
+  const body = JSON.stringify(responseBody);
+  await debugLogger.logOutgoingResponse(200, responseHeaders.entries(), body);
+  return new Response(body, { status: 200, headers: responseHeaders });
+}
+
+async function handleResponsesList(
+  request: Request,
+  services: Services,
+): Promise<Response> {
+  const authorizationHeader = normalizeBearerToken(
+    request.headers.get("authorization"),
+  );
+  await services.debugLogger.logIncomingRequest(request, null);
+  if (!authorizationHeader) {
+    return writeOpenAiError(
+      services,
+      401,
+      "Missing Authorization Bearer token.",
+      "invalid_request_error",
+      "missing_authorization",
+    );
+  }
+
+  const requestUrl = new URL(request.url);
+  const limit = clampListLimit(requestUrl.searchParams.get("limit"));
+  const listed = services.responseStore.list(limit);
+  const body = JSON.stringify({
+    object: "list",
+    data: listed.data,
+    has_more: listed.hasMore,
+    first_id: listed.firstId,
+    last_id: listed.lastId,
+  });
+  const headers = new Headers({ "content-type": "application/json" });
+  await services.debugLogger.logOutgoingResponse(200, headers.entries(), body);
+  return new Response(body, { status: 200, headers });
+}
+
+async function handleResponsesRetrieve(
+  request: Request,
+  services: Services,
+  responseIdParam: string,
+): Promise<Response> {
+  const authorizationHeader = normalizeBearerToken(
+    request.headers.get("authorization"),
+  );
+  await services.debugLogger.logIncomingRequest(request, null);
+  if (!authorizationHeader) {
+    return writeOpenAiError(
+      services,
+      401,
+      "Missing Authorization Bearer token.",
+      "invalid_request_error",
+      "missing_authorization",
+    );
+  }
+
+  const responseId = responseIdParam.trim();
+  if (!responseId) {
+    return writeOpenAiError(
+      services,
+      400,
+      "The response ID is required.",
+      "invalid_request_error",
+      "missing_response_id",
+    );
+  }
+
+  const response = services.responseStore.tryGet(responseId);
+  if (!response) {
+    return writeOpenAiError(
+      services,
+      404,
+      `Response '${responseId}' was not found.`,
+      "invalid_request_error",
+      "response_not_found",
+    );
+  }
+
+  const headers = new Headers({ "content-type": "application/json" });
+  const body = JSON.stringify(response);
+  await services.debugLogger.logOutgoingResponse(200, headers.entries(), body);
+  return new Response(body, { status: 200, headers });
+}
+
+async function handleResponsesDelete(
+  request: Request,
+  services: Services,
+  responseIdParam: string,
+): Promise<Response> {
+  const authorizationHeader = normalizeBearerToken(
+    request.headers.get("authorization"),
+  );
+  await services.debugLogger.logIncomingRequest(request, null);
+  if (!authorizationHeader) {
+    return writeOpenAiError(
+      services,
+      401,
+      "Missing Authorization Bearer token.",
+      "invalid_request_error",
+      "missing_authorization",
+    );
+  }
+
+  const responseId = responseIdParam.trim();
+  if (!responseId) {
+    return writeOpenAiError(
+      services,
+      400,
+      "The response ID is required.",
+      "invalid_request_error",
+      "missing_response_id",
+    );
+  }
+
+  const deleted = services.responseStore.tryDelete(responseId);
+  if (!deleted) {
+    return writeOpenAiError(
+      services,
+      404,
+      `Response '${responseId}' was not found.`,
+      "invalid_request_error",
+      "response_not_found",
+    );
+  }
+
+  const headers = new Headers({ "content-type": "application/json" });
+  const body = JSON.stringify({
+    id: responseId,
+    object: "response",
+    deleted: true,
+  });
+  await services.debugLogger.logOutgoingResponse(200, headers.entries(), body);
+  return new Response(body, { status: 200, headers });
+}
+
+async function buildBufferedResponsesStreamResponse(
+  services: Services,
+  parsedRequest: ParsedResponsesRequest,
+  conversationId: string,
+  assistantResponse: ReturnType<typeof buildAssistantResponse>,
+  headers: Headers,
+): Promise<Response> {
+  const responseId = createOpenAiResponseId();
+  const createdAt = nowUnix();
+  const includeConversationId = services.options.includeConversationIdInResponseBody;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const encoder = new TextEncoder();
+      const writeDataEvent = (event: JsonObject) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      };
+      const writeError = (message: string, code: string) => {
+        controller.enqueue(
+          encoder.encode(
+            `event: error\ndata: ${JSON.stringify({
+              error: {
+                message,
+                type: "api_error",
+                param: null,
+                code,
+              },
+            })}\n\n`,
+          ),
+        );
+      };
+
+      try {
+        const inProgress = buildOpenAiResponseObject(
+          responseId,
+          createdAt,
+          parsedRequest.base.model,
+          "in_progress",
+          [],
+          parsedRequest,
+          includeConversationId ? conversationId : null,
+        );
+        writeDataEvent(buildResponseCreatedEvent(inProgress));
+        writeDataEvent(buildResponseInProgressEvent(inProgress));
+
+        const outputItems =
+          assistantResponse.toolCalls.length > 0
+            ? buildFunctionCallOutputItems(assistantResponse.toolCalls, "completed")
+            : [
+                buildMessageOutputItem(
+                  createOpenAiOutputItemId("msg"),
+                  assistantResponse.content ?? "",
+                  "completed",
+                ),
+              ];
+
+        for (let index = 0; index < outputItems.length; index++) {
+          const item = outputItems[index];
+          writeDataEvent(
+            buildResponseOutputItemAddedEvent(
+              responseId,
+              index,
+              item.type === "message"
+                ? buildMessageOutputItem(String(item.id ?? ""), "", "in_progress")
+                : item,
+            ),
+          );
+          if (item.type === "message") {
+            const content = assistantResponse.content ?? "";
+            if (content) {
+              writeDataEvent(
+                buildResponseOutputTextDeltaEvent(
+                  responseId,
+                  index,
+                  String(item.id ?? ""),
+                  content,
+                ),
+              );
+            }
+            writeDataEvent(
+              buildResponseOutputTextDoneEvent(
+                responseId,
+                index,
+                String(item.id ?? ""),
+                content,
+              ),
+            );
+          }
+          writeDataEvent(buildResponseOutputItemDoneEvent(responseId, index, item));
+        }
+
+        const completed = buildOpenAiResponseObject(
+          responseId,
+          createdAt,
+          parsedRequest.base.model,
+          "completed",
+          outputItems,
+          parsedRequest,
+          includeConversationId ? conversationId : null,
+        );
+        writeDataEvent(buildResponseCompletedEvent(completed));
+        services.responseStore.set(responseId, completed, conversationId);
+      } catch (error) {
+        writeError(
+          `Failed to build streaming response. ${String(error)}`,
+          "response_stream_error",
+        );
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  headers.set("content-type", "text/event-stream");
+  headers.set("cache-control", "no-cache");
+  headers.set("connection", "keep-alive");
+  headers.set("x-m365-conversation-id", conversationId);
+  await services.debugLogger.logOutgoingResponse(200, headers.entries(), null);
+  return new Response(stream, { status: 200, headers });
+}
+
+async function transformGraphStreamToResponses(
+  services: Services,
+  graphResponse: Response,
+  parsedRequest: ParsedResponsesRequest,
+  initialConversationId: string,
+  scopedConversationKey: string | null,
+  headers: Headers,
+): Promise<Response> {
+  const includeConversationId = services.options.includeConversationIdInResponseBody;
+  const responseId = createOpenAiResponseId();
+  const createdAt = nowUnix();
+  const messageItemId = createOpenAiOutputItemId("msg");
+  let conversationId = initialConversationId;
+  let emittedContent = "";
+
+  const stream = new ReadableStream<Uint8Array>({
+    start: async (controller) => {
+      const encoder = new TextEncoder();
+      const writeDataEvent = (event: JsonObject) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      };
+      const writeError = (message: string, code: string) => {
+        controller.enqueue(
+          encoder.encode(
+            `event: error\ndata: ${JSON.stringify({
+              error: {
+                message,
+                type: "api_error",
+                param: null,
+                code,
+              },
+            })}\n\n`,
+          ),
+        );
+      };
+
+      const inProgress = buildOpenAiResponseObject(
+        responseId,
+        createdAt,
+        parsedRequest.base.model,
+        "in_progress",
+        [],
+        parsedRequest,
+        includeConversationId ? conversationId : null,
+      );
+      writeDataEvent(buildResponseCreatedEvent(inProgress));
+      writeDataEvent(buildResponseInProgressEvent(inProgress));
+      writeDataEvent(
+        buildResponseOutputItemAddedEvent(
+          responseId,
+          0,
+          buildMessageOutputItem(messageItemId, "", "in_progress"),
+        ),
+      );
+
+      try {
+        if (graphResponse.body) {
+          for await (const event of readSseEvents(graphResponse.body)) {
+            const data = event.data.trim();
+            if (!data) {
+              continue;
+            }
+            if (data.toLowerCase() === "[done]") {
+              break;
+            }
+
+            const streamConversationId =
+              extractCopilotConversationIdFromStream(data);
+            if (streamConversationId) {
+              conversationId = streamConversationId;
+              if (scopedConversationKey) {
+                services.conversationStore.set(
+                  scopedConversationKey,
+                  conversationId,
+                );
+              }
+            }
+
+            const latestAssistantText = extractCopilotAssistantTextFromStreamData(
+              data,
+              parsedRequest.base.promptText,
+            );
+            if (!latestAssistantText) {
+              continue;
+            }
+
+            const delta = computeTrailingDelta(emittedContent, latestAssistantText);
+            if (!delta) {
+              continue;
+            }
+
+            emittedContent += delta;
+            writeDataEvent(
+              buildResponseOutputTextDeltaEvent(responseId, 0, messageItemId, delta),
+            );
+          }
+        }
+
+        writeDataEvent(
+          buildResponseOutputTextDoneEvent(
+            responseId,
+            0,
+            messageItemId,
+            emittedContent,
+          ),
+        );
+        const outputItem = buildMessageOutputItem(
+          messageItemId,
+          emittedContent,
+          "completed",
+        );
+        writeDataEvent(buildResponseOutputItemDoneEvent(responseId, 0, outputItem));
+
+        const completed = buildOpenAiResponseObject(
+          responseId,
+          createdAt,
+          parsedRequest.base.model,
+          "completed",
+          [outputItem],
+          parsedRequest,
+          includeConversationId ? conversationId : null,
+        );
+        writeDataEvent(buildResponseCompletedEvent(completed));
+        services.responseStore.set(responseId, completed, conversationId);
+      } catch (error) {
+        writeError(
+          `Microsoft Graph chatOverStream request failed. ${String(error)}`,
+          "graph_error",
+        );
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  headers.set("content-type", "text/event-stream");
+  headers.set("cache-control", "no-cache");
+  headers.set("connection", "keep-alive");
+  headers.set("x-m365-conversation-id", initialConversationId);
+  await services.debugLogger.logOutgoingResponse(200, headers.entries(), null);
+  return new Response(stream, { status: 200, headers });
+}
+
+async function streamSubstrateAsResponses(
+  services: Services,
+  authorizationHeader: string,
+  initialConversationId: string,
+  parsedRequest: ParsedResponsesRequest,
+  createdConversation: boolean,
+  scopedConversationKey: string | null,
+  headers: Headers,
+): Promise<Response> {
+  const includeConversationId = services.options.includeConversationIdInResponseBody;
+  const responseId = createOpenAiResponseId();
+  const createdAt = nowUnix();
+  const messageItemId = createOpenAiOutputItemId("msg");
+  let conversationId = initialConversationId;
+  let emitted = "";
+
+  const stream = new ReadableStream<Uint8Array>({
+    start: async (controller) => {
+      const encoder = new TextEncoder();
+      const writeDataEvent = (event: JsonObject) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      };
+      const writeError = (message: string, code: string) => {
+        controller.enqueue(
+          encoder.encode(
+            `event: error\ndata: ${JSON.stringify({
+              error: {
+                message,
+                type: "api_error",
+                param: null,
+                code,
+              },
+            })}\n\n`,
+          ),
+        );
+      };
+
+      const inProgress = buildOpenAiResponseObject(
+        responseId,
+        createdAt,
+        parsedRequest.base.model,
+        "in_progress",
+        [],
+        parsedRequest,
+        includeConversationId ? conversationId : null,
+      );
+      writeDataEvent(buildResponseCreatedEvent(inProgress));
+      writeDataEvent(buildResponseInProgressEvent(inProgress));
+      writeDataEvent(
+        buildResponseOutputItemAddedEvent(
+          responseId,
+          0,
+          buildMessageOutputItem(messageItemId, "", "in_progress"),
+        ),
+      );
+
+      const substrateResponse = await services.substrateClient.chatStream(
+        authorizationHeader,
+        conversationId,
+        parsedRequest.base,
+        createdConversation,
+        async (update) => {
+          if (update.conversationId) {
+            conversationId = update.conversationId;
+            if (scopedConversationKey) {
+              services.conversationStore.set(scopedConversationKey, conversationId);
+            }
+          }
+          if (!update.deltaText) {
+            return;
+          }
+          emitted += update.deltaText;
+          writeDataEvent(
+            buildResponseOutputTextDeltaEvent(
+              responseId,
+              0,
+              messageItemId,
+              update.deltaText,
+            ),
+          );
+        },
+      );
+
+      if (!substrateResponse.isSuccess) {
+        const details = extractGraphErrorMessage(substrateResponse.rawBody);
+        writeError(
+          details
+            ? `Substrate chat request failed. ${details}`
+            : "Substrate chat request failed.",
+          "substrate_error",
+        );
+        controller.close();
+        return;
+      }
+
+      if (substrateResponse.conversationId) {
+        conversationId = substrateResponse.conversationId;
+      }
+      const assistantText =
+        substrateResponse.assistantText ??
+        extractCopilotAssistantText(
+          substrateResponse.responseJson,
+          parsedRequest.base.promptText,
+        ) ??
+        "";
+
+      const trailing = computeTrailingDelta(emitted, assistantText);
+      if (trailing) {
+        emitted += trailing;
+        writeDataEvent(
+          buildResponseOutputTextDeltaEvent(responseId, 0, messageItemId, trailing),
+        );
+      }
+
+      writeDataEvent(
+        buildResponseOutputTextDoneEvent(responseId, 0, messageItemId, emitted),
+      );
+      const outputItem = buildMessageOutputItem(messageItemId, emitted, "completed");
+      writeDataEvent(buildResponseOutputItemDoneEvent(responseId, 0, outputItem));
+
+      const completed = buildOpenAiResponseObject(
+        responseId,
+        createdAt,
+        parsedRequest.base.model,
+        "completed",
+        [outputItem],
+        parsedRequest,
+        includeConversationId ? conversationId : null,
+      );
+      writeDataEvent(buildResponseCompletedEvent(completed));
+      services.responseStore.set(responseId, completed, conversationId);
+      controller.close();
+    },
+  });
+
+  headers.set("content-type", "text/event-stream");
+  headers.set("cache-control", "no-cache");
+  headers.set("connection", "keep-alive");
+  headers.set("x-m365-conversation-id", initialConversationId);
+  await services.debugLogger.logOutgoingResponse(200, headers.entries(), null);
+  return new Response(stream, { status: 200, headers });
+}
+
+function clampListLimit(raw: string | null): number {
+  if (!raw || !raw.trim()) {
+    return 20;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 20;
+  }
+  return parsed > 100 ? 100 : parsed;
 }
 
 async function writeOpenAiError(
