@@ -61,7 +61,19 @@ async function fetchTokenWithPlaywrightNode(tokenPath, storageStatePath) {
       await editor.waitFor({ state: "visible", timeout: 20_000 });
       console.log("[playwright] Sending message to trigger WebSocket...");
       await editor.fill("Hi");
-      await page.keyboard.press("Enter");
+      await page.waitForTimeout(1_000);
+
+      const sendButton = page
+        .locator('button[title="Send"], [role="button"][title="Send"], [title="Send"]')
+        .first();
+      try {
+        await sendButton.waitFor({ state: "visible", timeout: 10_000 });
+        await sendButton.click({ timeout: 10_000 });
+        console.log("[playwright] Send button clicked.");
+      } catch {
+        await page.keyboard.press("Enter");
+        console.log("[playwright] Send button unavailable, submitted with Enter.");
+      }
     } catch {
       console.log(
         "[playwright] Chat editor not found - waiting passively for WebSocket...",
