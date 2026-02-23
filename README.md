@@ -1,6 +1,6 @@
 # m365-copilot-bun-proxy
 
-TypeScript/Bun port of the original YarpPilot .NET proxy + CLI.
+TypeScript/Bun port of the original M365 Copilot Bun Proxy .NET proxy + CLI.
 
 ## Stack
 

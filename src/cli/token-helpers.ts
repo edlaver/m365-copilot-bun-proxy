@@ -16,7 +16,7 @@ export type TokenSummary = {
 export async function getTokenPath(): Promise<string> {
   const localAppData =
     process.env.LOCALAPPDATA ?? path.join(os.homedir(), ".local", "share");
-  const directory = path.join(localAppData, "YarpPilot", "Cli");
+  const directory = path.join(localAppData, "M365 Copilot Bun Proxy", "Cli");
   await fs.mkdir(directory, { recursive: true });
   return path.join(directory, "token.json");
 }
@@ -24,7 +24,7 @@ export async function getTokenPath(): Promise<string> {
 export async function getBrowserStatePath(): Promise<string> {
   const localAppData =
     process.env.LOCALAPPDATA ?? path.join(os.homedir(), ".local", "share");
-  const directory = path.join(localAppData, "YarpPilot", "Cli");
+  const directory = path.join(localAppData, "M365 Copilot Bun Proxy", "Cli");
   await fs.mkdir(directory, { recursive: true });
   return path.join(directory, "browser-state.json");
 }

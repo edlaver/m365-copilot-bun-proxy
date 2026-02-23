@@ -52,7 +52,7 @@ const exitCode =
 process.exit(exitCode);
 
 function showUsage(): number {
-  console.log("YarpPilot CLI (Bun)");
+  console.log("M365 Copilot Bun Proxy CLI (Bun)");
   console.log(
     'Usage: bun src/cli/index.ts chat [--message "..."] [--token "..."] [--proxy "http://localhost:4000"] [--model "m365-copilot"] [--api "completions|responses"] [--responses]',
   );
@@ -139,7 +139,7 @@ async function runStatusCommand(
   const proxy = options.proxy ?? "http://localhost:4000";
   const status = await getStatusInfo(proxy);
 
-  console.log("YarpPilot Status");
+  console.log("M365 Copilot Bun Proxy Status");
   console.log(`Proxy: ${status.proxy}`);
   console.log(
     `Proxy health: ${status.proxyStatus}${
@@ -322,7 +322,7 @@ async function runChatTui(
   });
   const header = new TextRenderable(renderer, {
     content:
-      "YarpPilot CLI (OpenTUI) - /status /api [completions|responses] /token /cleartoken /exit",
+      "M365 Copilot Bun Proxy CLI (OpenTUI) - /status /api [completions|responses] /token /cleartoken /exit",
   });
   const transcriptPanel = new BoxRenderable(renderer, {
     flexGrow: 1,
@@ -492,7 +492,7 @@ async function handleSlashCommand(
 
   if (command === "/status") {
     const status = await getStatusInfo(proxy);
-    writeLine("YarpPilot Status");
+    writeLine("M365 Copilot Bun Proxy Status");
     writeLine(`Proxy: ${status.proxy}`);
     writeLine(
       `Proxy health: ${status.proxyStatus}${
