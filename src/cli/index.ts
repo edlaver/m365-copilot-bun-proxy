@@ -1,7 +1,3 @@
-import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import readline from "node:readline/promises";
 import {
   BoxRenderable,
@@ -11,20 +7,24 @@ import {
   TextRenderable,
 } from "@opentui/core";
 import { readSseEvents, tryParseJsonObject } from "../proxy/utils";
+import { fetchTokenWithPlaywright } from "./playwright-token";
+import {
+  type TokenState,
+  type TokenSummary,
+  buildTokenSummary,
+  deleteToken,
+  ensureValidToken,
+  getBrowserStatePath,
+  getTokenPath,
+  loadToken,
+  parseTokenOrThrow,
+  promptForTokenInteractive,
+  saveToken,
+} from "./token-helpers";
 
 type ParsedArgs = {
   positionals: string[];
   options: Record<string, string | null>;
-};
-
-type TokenState = {
-  token: string;
-  expiresAtUtc: string;
-};
-
-type TokenSummary = {
-  state: "not set" | "valid" | "expired";
-  expiry: string;
 };
 
 type ApiMode = "completions" | "responses";
@@ -62,6 +62,7 @@ function showUsage(): number {
   console.log('       bun src/cli/index.ts token set [--token "..."]');
   console.log("       bun src/cli/index.ts token clear");
   console.log("       bun src/cli/index.ts token status");
+  console.log("       bun src/cli/index.ts token fetch");
   return 0;
 }
 
@@ -102,6 +103,30 @@ async function runTokenCommand(parsedArgs: ParsedArgs): Promise<number> {
     console.log(`Path: ${tokenPath}`);
     console.log(`State: ${summary.state}`);
     console.log(`Expiry: ${summary.expiry}`);
+    return 0;
+  }
+
+  if (sub === "fetch") {
+    console.log("[token fetch] Starting Playwright token capture...");
+    const storageStatePath = await getBrowserStatePath();
+    console.log(`[token fetch] Token path: ${tokenPath}`);
+    console.log(`[token fetch] Browser state path: ${storageStatePath}`);
+    try {
+      await fetchTokenWithPlaywright(tokenPath, storageStatePath);
+    } catch (error) {
+      const msg = String(
+        error instanceof Error ? (error.message ?? error) : error,
+      )
+        .replace(/\x1b\[[0-9;]*[mGKHFABCDJ]/g, "") // strip ANSI
+        .trim();
+      const stack =
+        error instanceof Error && error.stack
+          ? error.stack.replace(/\x1b\[[0-9;]*[mGKHFABCDJ]/g, "").trim()
+          : "";
+      console.error(`\n[token fetch] FAILED: ${msg}`);
+      if (stack) console.error(stack);
+      return 1;
+    }
     return 0;
   }
 
@@ -885,176 +910,4 @@ function firstNonEmpty(
     }
   }
   return null;
-}
-
-async function getTokenPath(): Promise<string> {
-  const localAppData =
-    process.env.LOCALAPPDATA ?? path.join(os.homedir(), ".local", "share");
-  const directory = path.join(localAppData, "YarpPilot", "Cli");
-  await fs.mkdir(directory, { recursive: true });
-  return path.join(directory, "token.json");
-}
-
-async function loadToken(filePath: string): Promise<TokenState | null> {
-  try {
-    const content = await fs.readFile(filePath, "utf8");
-    const parsed = JSON.parse(content) as {
-      token?: string;
-      expiresAtUtc?: string;
-    };
-    if (!parsed.token?.trim() || !parsed.expiresAtUtc?.trim()) {
-      return null;
-    }
-    const expires = new Date(parsed.expiresAtUtc);
-    if (Number.isNaN(expires.getTime())) {
-      return null;
-    }
-    return { token: parsed.token.trim(), expiresAtUtc: expires.toISOString() };
-  } catch {
-    return null;
-  }
-}
-
-async function saveToken(
-  filePath: string,
-  token: string,
-  expiresAtUtc: Date,
-): Promise<void> {
-  await fs.writeFile(
-    filePath,
-    JSON.stringify(
-      {
-        token,
-        expiresAtUtc: expiresAtUtc.toISOString(),
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
-}
-
-async function deleteToken(filePath: string): Promise<boolean> {
-  try {
-    await fs.unlink(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function buildTokenSummary(tokenState: TokenState | null): TokenSummary {
-  if (!tokenState) {
-    return { state: "not set", expiry: "n/a" };
-  }
-  const expires = new Date(tokenState.expiresAtUtc);
-  const remainingMs = expires.getTime() - Date.now();
-  if (remainingMs > 60_000) {
-    return { state: "valid", expiry: expires.toISOString() };
-  }
-  return { state: "expired", expiry: expires.toISOString() };
-}
-
-async function ensureValidToken(
-  tokenState: TokenState | null,
-  tokenPath: string,
-  providedToken: string | null,
-): Promise<{ token: string; expiresAtUtc: Date }> {
-  if (providedToken?.trim()) {
-    const parsed = parseTokenOrThrow(providedToken);
-    await saveToken(tokenPath, parsed.token, parsed.expiresAtUtc);
-    return parsed;
-  }
-
-  if (tokenState?.token?.trim()) {
-    const expires = new Date(tokenState.expiresAtUtc);
-    if (expires.getTime() > Date.now() + 60_000) {
-      return { token: tokenState.token, expiresAtUtc: expires };
-    }
-  }
-
-  const prompted = await promptForTokenInteractive();
-  await saveToken(tokenPath, prompted.token, prompted.expiresAtUtc);
-  return prompted;
-}
-
-function parseTokenOrThrow(rawToken: string): {
-  token: string;
-  expiresAtUtc: Date;
-} {
-  const normalized = normalizeToken(rawToken);
-  if (!normalized) {
-    throw new Error("Token cannot be empty.");
-  }
-  const expiresAtUtc =
-    tryGetJwtExpiry(normalized) ?? new Date(Date.now() + 60 * 60 * 1000);
-  return { token: normalized, expiresAtUtc };
-}
-
-async function promptForTokenInteractive(): Promise<{
-  token: string;
-  expiresAtUtc: Date;
-}> {
-  if (!process.stdin.isTTY) {
-    throw new Error(
-      "No valid cached token and no interactive terminal. Pass --token or set YARPILOT_TOKEN.",
-    );
-  }
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  try {
-    const raw = await rl.question(
-      "Paste Microsoft Graph/Substrate bearer token: ",
-    );
-    return parseTokenOrThrow(raw);
-  } finally {
-    rl.close();
-  }
-}
-
-function normalizeToken(raw: string): string {
-  const trimmed = raw.trim();
-  return trimmed.toLowerCase().startsWith("bearer ")
-    ? trimmed.slice("Bearer ".length).trim()
-    : trimmed;
-}
-
-function tryGetJwtExpiry(token: string): Date | null {
-  if (!token.trim()) {
-    return null;
-  }
-  const parts = token.split(".");
-  if (parts.length < 2) {
-    return null;
-  }
-  try {
-    const payload = Buffer.from(
-      base64UrlNormalize(parts[1]),
-      "base64",
-    ).toString("utf8");
-    const parsed = JSON.parse(payload) as { exp?: number | string };
-    const expRaw = parsed.exp;
-    const exp =
-      typeof expRaw === "number"
-        ? expRaw
-        : typeof expRaw === "string"
-          ? Number.parseInt(expRaw, 10)
-          : Number.NaN;
-    if (!Number.isFinite(exp)) {
-      return null;
-    }
-    return new Date(exp * 1000);
-  } catch {
-    return null;
-  }
-}
-
-function base64UrlNormalize(encoded: string): string {
-  const normalized = encoded.replaceAll("-", "+").replaceAll("_", "/");
-  const padding = normalized.length % 4;
-  return padding > 0
-    ? normalized.padEnd(normalized.length + (4 - padding), "=")
-    : normalized;
 }
