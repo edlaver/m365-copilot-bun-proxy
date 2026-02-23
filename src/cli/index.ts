@@ -27,6 +27,14 @@ type TokenSummary = {
   expiry: string;
 };
 
+type ApiMode = "completions" | "responses";
+
+type SessionState = {
+  apiMode: ApiMode;
+  conversationId: string | null;
+  previousResponseId: string | null;
+};
+
 const parsed = parseArgs(process.argv.slice(2));
 const command = parsed.positionals[0]?.toLowerCase() ?? "chat";
 
@@ -46,7 +54,7 @@ process.exit(exitCode);
 function showUsage(): number {
   console.log("YarpPilot CLI (Bun)");
   console.log(
-    'Usage: bun src/cli/index.ts chat [--message "..."] [--token "..."] [--proxy "http://localhost:4000"] [--model "m365-copilot"]',
+    'Usage: bun src/cli/index.ts chat [--message "..."] [--token "..."] [--proxy "http://localhost:4000"] [--model "m365-copilot"] [--api "completions|responses"] [--responses]',
   );
   console.log(
     '       bun src/cli/index.ts status [--proxy "http://localhost:4000"]',
@@ -152,6 +160,13 @@ async function runChatCommand(
 ): Promise<number> {
   const proxy = options.proxy ?? "http://localhost:4000";
   const model = options.model ?? "m365-copilot";
+  let apiMode: ApiMode;
+  try {
+    apiMode = resolveApiMode(options);
+  } catch (error) {
+    console.error(String(error));
+    return 1;
+  }
   let oneShotMessage = options.message;
   const providedToken = firstNonEmpty(
     options.token,
@@ -163,12 +178,17 @@ async function runChatCommand(
   let token = await ensureValidToken(cachedToken, tokenPath, providedToken);
 
   if (oneShotMessage?.trim()) {
+    const oneShotSession: SessionState = {
+      apiMode,
+      conversationId: null,
+      previousResponseId: null,
+    };
     const result = await sendChatTurn(
       proxy,
       token.token,
       model,
       oneShotMessage,
-      null,
+      oneShotSession,
       () => {},
     );
     if (result.errorMessage) {
@@ -179,7 +199,7 @@ async function runChatCommand(
   }
 
   if (process.stdin.isTTY) {
-    return runChatTui(proxy, model, tokenPath, token);
+    return runChatTui(proxy, model, tokenPath, token, apiMode);
   }
 
   const rl = readline.createInterface({
@@ -188,7 +208,11 @@ async function runChatCommand(
     terminal: false,
   });
 
-  let conversationId: string | null = null;
+  const session: SessionState = {
+    apiMode,
+    conversationId: null,
+    previousResponseId: null,
+  };
   while (true) {
     const line = await rl.question("");
     if (!line || !line.trim()) {
@@ -204,11 +228,13 @@ async function runChatCommand(
         proxy,
         tokenPath,
         token,
+        session.apiMode,
         (text) => {
           process.stdout.write(`${text}\n`);
         },
       );
       token = handled.token;
+      session.apiMode = handled.apiMode;
       if (handled.didExit) {
         break;
       }
@@ -229,7 +255,7 @@ async function runChatCommand(
       token.token,
       model,
       prompt,
-      conversationId,
+      session,
       (delta) => {
         process.stdout.write(delta);
       },
@@ -241,8 +267,10 @@ async function runChatCommand(
         token = await promptForTokenInteractive();
         await saveToken(tokenPath, token.token, token.expiresAtUtc);
       }
-    } else if (result.conversationId) {
-      conversationId = result.conversationId;
+    } else {
+      session.conversationId = result.conversationId ?? session.conversationId;
+      session.previousResponseId =
+        result.responseId ?? session.previousResponseId;
     }
   }
   rl.close();
@@ -254,6 +282,7 @@ async function runChatTui(
   model: string,
   tokenPath: string,
   initialToken: { token: string; expiresAtUtc: Date },
+  initialApiMode: ApiMode,
 ): Promise<number> {
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
@@ -267,7 +296,8 @@ async function runChatTui(
     gap: 1,
   });
   const header = new TextRenderable(renderer, {
-    content: "YarpPilot CLI (OpenTUI) - /status /token /cleartoken /exit",
+    content:
+      "YarpPilot CLI (OpenTUI) - /status /api [completions|responses] /token /cleartoken /exit",
   });
   const transcriptPanel = new BoxRenderable(renderer, {
     flexGrow: 1,
@@ -284,7 +314,9 @@ async function runChatTui(
     placeholder: "Ask Copilot...",
     value: "",
   });
-  const status = new TextRenderable(renderer, { content: `Proxy: ${proxy}` });
+  const status = new TextRenderable(renderer, {
+    content: `Proxy: ${proxy} | API: ${initialApiMode}`,
+  });
 
   transcriptPanel.add(transcript);
   root.add(header);
@@ -297,7 +329,11 @@ async function runChatTui(
   input.focus();
 
   let token = initialToken;
-  let conversationId: string | null = null;
+  const session: SessionState = {
+    apiMode: initialApiMode,
+    conversationId: null,
+    previousResponseId: null,
+  };
   let busy = false;
   let closed = false;
   let output = "";
@@ -344,10 +380,12 @@ async function runChatTui(
         proxy,
         tokenPath,
         token,
+        session.apiMode,
         (text) => appendOutput(`${text}\n`),
         setStatus,
       );
       token = handled.token;
+      session.apiMode = handled.apiMode;
       if (handled.didExit) {
         await shutdown();
       }
@@ -367,14 +405,14 @@ async function runChatTui(
 
     busy = true;
     appendOutput(`\nYou: ${prompt}\nCopilot: `);
-    setStatus("Waiting for response...");
+    setStatus(`Waiting for response... API: ${session.apiMode}`);
 
     const result = await sendChatTurn(
       proxy,
       token.token,
       model,
       prompt,
-      conversationId,
+      session,
       (delta) => {
         appendOutput(delta);
       },
@@ -394,8 +432,10 @@ async function runChatTui(
         }
       }
     } else {
-      conversationId = result.conversationId ?? conversationId;
-      setStatus(conversationId ? `conversation: ${conversationId}` : "ok");
+      session.conversationId = result.conversationId ?? session.conversationId;
+      session.previousResponseId =
+        result.responseId ?? session.previousResponseId;
+      setStatus(formatSessionStatus(proxy, session));
     }
     busy = false;
   });
@@ -412,12 +452,17 @@ async function handleSlashCommand(
   proxy: string,
   tokenPath: string,
   token: { token: string; expiresAtUtc: Date },
+  apiMode: ApiMode,
   writeLine: (text: string) => void,
   setStatus?: (text: string) => void,
-): Promise<{ didExit: boolean; token: { token: string; expiresAtUtc: Date } }> {
+): Promise<{
+  didExit: boolean;
+  token: { token: string; expiresAtUtc: Date };
+  apiMode: ApiMode;
+}> {
   const command = raw.trim().toLowerCase();
   if (command === "/exit" || command === "/quit") {
-    return { didExit: true, token };
+    return { didExit: true, token, apiMode };
   }
 
   if (command === "/status") {
@@ -432,12 +477,30 @@ async function handleSlashCommand(
     writeLine(`Token store: ${status.tokenPath}`);
     writeLine(`Token state: ${status.tokenSummary.state}`);
     writeLine(`Token expiry: ${status.tokenSummary.expiry}`);
+    writeLine(`API mode: ${apiMode}`);
     setStatus?.(
       `Proxy: ${status.proxyStatus}${
         status.proxyDetails ? ` (${status.proxyDetails})` : ""
-      } | Token: ${status.tokenSummary.state}`,
+      } | Token: ${status.tokenSummary.state} | API: ${apiMode}`,
     );
-    return { didExit: false, token };
+    return { didExit: false, token, apiMode };
+  }
+
+  if (command === "/api") {
+    writeLine(`API mode: ${apiMode}`);
+    setStatus?.(`API mode: ${apiMode}`);
+    return { didExit: false, token, apiMode };
+  }
+
+  if (command.startsWith("/api ")) {
+    const requested = command.slice("/api ".length).trim();
+    if (requested === "completions" || requested === "responses") {
+      writeLine(`Switched API mode to: ${requested}`);
+      setStatus?.(`API mode: ${requested}`);
+      return { didExit: false, token, apiMode: requested };
+    }
+    writeLine("Usage: /api completions | /api responses");
+    return { didExit: false, token, apiMode };
   }
 
   if (command === "/token") {
@@ -448,10 +511,10 @@ async function handleSlashCommand(
         `Saved token. Expires: ${parsedToken.expiresAtUtc.toISOString()}`,
       );
       setStatus?.("Token updated.");
-      return { didExit: false, token: parsedToken };
+      return { didExit: false, token: parsedToken, apiMode };
     } catch (error) {
       writeLine(`Token update failed: ${String(error)}`);
-      return { didExit: false, token };
+      return { didExit: false, token, apiMode };
     }
   }
 
@@ -459,11 +522,15 @@ async function handleSlashCommand(
     const deleted = await deleteToken(tokenPath);
     writeLine(deleted ? "Cleared saved token." : "No saved token to clear.");
     setStatus?.("Token cleared.");
-    return { didExit: false, token: { token: "", expiresAtUtc: new Date(0) } };
+    return {
+      didExit: false,
+      token: { token: "", expiresAtUtc: new Date(0) },
+      apiMode,
+    };
   }
 
   writeLine(`Unknown command: ${raw}`);
-  return { didExit: false, token };
+  return { didExit: false, token, apiMode };
 }
 
 async function sendChatTurn(
@@ -471,10 +538,29 @@ async function sendChatTurn(
   token: string,
   model: string,
   prompt: string,
-  conversationId: string | null,
+  session: SessionState,
   onDelta: (text: string) => void,
 ): Promise<{
   conversationId: string | null;
+  responseId: string | null;
+  errorMessage: string | null;
+  isAuthError: boolean;
+}> {
+  return session.apiMode === "responses"
+    ? sendResponsesTurn(proxyBaseUrl, token, model, prompt, session, onDelta)
+    : sendCompletionsTurn(proxyBaseUrl, token, model, prompt, session, onDelta);
+}
+
+async function sendCompletionsTurn(
+  proxyBaseUrl: string,
+  token: string,
+  model: string,
+  prompt: string,
+  session: SessionState,
+  onDelta: (text: string) => void,
+): Promise<{
+  conversationId: string | null;
+  responseId: string | null;
   errorMessage: string | null;
   isAuthError: boolean;
 }> {
@@ -487,8 +573,8 @@ async function sendChatTurn(
     "Content-Type": "application/json",
     "x-m365-transport": "substrate",
   });
-  if (conversationId) {
-    headers.set("x-m365-conversation-id", conversationId);
+  if (session.conversationId) {
+    headers.set("x-m365-conversation-id", session.conversationId);
   }
 
   const body = JSON.stringify({
@@ -508,6 +594,7 @@ async function sendChatTurn(
     const errorBody = await response.text();
     return {
       conversationId: returnedConversationId,
+      responseId: null,
       errorMessage: extractErrorMessage(errorBody) ?? `HTTP ${response.status}`,
       isAuthError: response.status === 401 || response.status === 403,
     };
@@ -516,6 +603,7 @@ async function sendChatTurn(
   if (!response.body) {
     return {
       conversationId: returnedConversationId,
+      responseId: null,
       errorMessage: null,
       isAuthError: false,
     };
@@ -532,11 +620,12 @@ async function sendChatTurn(
     if (event.event.toLowerCase() === "error") {
       return {
         conversationId: returnedConversationId,
+        responseId: null,
         errorMessage: extractErrorMessage(data) ?? data,
         isAuthError: false,
       };
     }
-    const delta = extractDeltaContent(data);
+    const delta = extractCompletionsDeltaContent(data);
     if (delta) {
       onDelta(delta);
     }
@@ -544,12 +633,111 @@ async function sendChatTurn(
 
   return {
     conversationId: returnedConversationId,
+    responseId: null,
     errorMessage: null,
     isAuthError: false,
   };
 }
 
-function extractDeltaContent(rawChunk: string): string | null {
+async function sendResponsesTurn(
+  proxyBaseUrl: string,
+  token: string,
+  model: string,
+  prompt: string,
+  session: SessionState,
+  onDelta: (text: string) => void,
+): Promise<{
+  conversationId: string | null;
+  responseId: string | null;
+  errorMessage: string | null;
+  isAuthError: boolean;
+}> {
+  const requestUrl = new URL(
+    "/v1/responses",
+    proxyBaseUrl.endsWith("/") ? proxyBaseUrl : `${proxyBaseUrl}/`,
+  );
+  const headers = new Headers({
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    "x-m365-transport": "substrate",
+  });
+  if (session.conversationId) {
+    headers.set("x-m365-conversation-id", session.conversationId);
+  }
+
+  const requestBody: Record<string, unknown> = {
+    model,
+    stream: true,
+    input: prompt,
+  };
+  if (session.previousResponseId) {
+    requestBody.previous_response_id = session.previousResponseId;
+  }
+
+  const response = await fetch(requestUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(requestBody),
+  });
+
+  const returnedConversationId = response.headers.get("x-m365-conversation-id");
+  if (!response.ok) {
+    const errorBody = await response.text();
+    return {
+      conversationId: returnedConversationId,
+      responseId: null,
+      errorMessage: extractErrorMessage(errorBody) ?? `HTTP ${response.status}`,
+      isAuthError: response.status === 401 || response.status === 403,
+    };
+  }
+
+  if (!response.body) {
+    return {
+      conversationId: returnedConversationId,
+      responseId: null,
+      errorMessage: null,
+      isAuthError: false,
+    };
+  }
+
+  let responseId: string | null = null;
+  let streamConversationId: string | null = returnedConversationId;
+
+  for await (const event of readSseEvents(response.body)) {
+    const data = event.data.trim();
+    if (!data) {
+      continue;
+    }
+    if (data.toLowerCase() === "[done]") {
+      break;
+    }
+    if (event.event.toLowerCase() === "error") {
+      return {
+        conversationId: streamConversationId,
+        responseId,
+        errorMessage: extractErrorMessage(data) ?? data,
+        isAuthError: false,
+      };
+    }
+
+    responseId = extractResponsesResponseId(data) ?? responseId;
+    streamConversationId =
+      extractResponsesConversationId(data) ?? streamConversationId;
+    const delta = extractResponsesDeltaContent(data);
+    if (delta) {
+      onDelta(delta);
+    }
+  }
+
+  return {
+    conversationId: streamConversationId,
+    responseId,
+    errorMessage: null,
+    isAuthError: false,
+  };
+}
+
+function extractCompletionsDeltaContent(rawChunk: string): string | null {
   const json = tryParseJsonObject(rawChunk);
   const choices = json?.choices;
   if (!Array.isArray(choices) || choices.length === 0) {
@@ -565,6 +753,50 @@ function extractDeltaContent(rawChunk: string): string | null {
   }
   const content = (delta as Record<string, unknown>).content;
   return typeof content === "string" && content.length > 0 ? content : null;
+}
+
+function extractResponsesDeltaContent(rawChunk: string): string | null {
+  const json = tryParseJsonObject(rawChunk);
+  if (!json) {
+    return null;
+  }
+  if (json.type !== "response.output_text.delta") {
+    return null;
+  }
+  return typeof json.delta === "string" && json.delta.length > 0
+    ? json.delta
+    : null;
+}
+
+function extractResponsesResponseId(rawChunk: string): string | null {
+  const json = tryParseJsonObject(rawChunk);
+  if (!json) {
+    return null;
+  }
+  if (typeof json.response_id === "string" && json.response_id.trim()) {
+    return json.response_id.trim();
+  }
+  const response = json.response;
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    return null;
+  }
+  const id = (response as Record<string, unknown>).id;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
+}
+
+function extractResponsesConversationId(rawChunk: string): string | null {
+  const json = tryParseJsonObject(rawChunk);
+  if (!json) {
+    return null;
+  }
+  const response = json.response;
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    return null;
+  }
+  const conversationId = (response as Record<string, unknown>).conversation_id;
+  return typeof conversationId === "string" && conversationId.trim()
+    ? conversationId.trim()
+    : null;
 }
 
 function extractErrorMessage(rawJson: string): string | null {
@@ -599,6 +831,49 @@ function parseArgs(args: string[]): ParsedArgs {
   }
 
   return { positionals, options };
+}
+
+function resolveApiMode(options: Record<string, string | null>): ApiMode {
+  if ("responses" in options) {
+    return "responses";
+  }
+  if ("completions" in options) {
+    return "completions";
+  }
+  const raw = firstNonEmpty(options.api, options.endpoint, options.mode);
+  if (!raw) {
+    return "completions";
+  }
+  const normalized = raw.trim().toLowerCase();
+  if (
+    normalized === "responses" ||
+    normalized === "response" ||
+    normalized === "v1/responses"
+  ) {
+    return "responses";
+  }
+  if (
+    normalized === "completions" ||
+    normalized === "completion" ||
+    normalized === "chat/completions" ||
+    normalized === "v1/chat/completions"
+  ) {
+    return "completions";
+  }
+  throw new Error(
+    `Invalid API mode '${raw}'. Use --api completions or --api responses.`,
+  );
+}
+
+function formatSessionStatus(proxy: string, session: SessionState): string {
+  const segments = [`Proxy: ${proxy}`, `API: ${session.apiMode}`];
+  if (session.conversationId) {
+    segments.push(`conversation: ${session.conversationId}`);
+  }
+  if (session.previousResponseId) {
+    segments.push(`response: ${session.previousResponseId}`);
+  }
+  return segments.join(" | ");
 }
 
 function firstNonEmpty(

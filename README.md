@@ -118,12 +118,15 @@ This produces a single-file executable in `dist/` and copies `config.json` along
 bun run cli -- help
 bun run cli -- status
 bun run cli -- chat
+bun run cli -- chat --api responses
 bun run cli -- token set --token "<jwt>"
 ```
 
 In chat mode, the CLI supports these slash commands:
 
 - `/status` (token + connection status)
+- `/api` (show current API mode)
+- `/api completions` or `/api responses` (toggle endpoint)
 - `/token` (paste a new token)
 - `/cleartoken` (clear cached token)
 - `/exit` (quit)
