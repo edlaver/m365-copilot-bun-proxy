@@ -197,7 +197,7 @@ async function getStatusInfo(proxy: string): Promise<{
     proxyStatus = response.ok ? "ok" : "error";
     proxyDetails = `HTTP ${response.status}`;
   } catch (error) {
-    proxyDetails = String(error);
+    proxyDetails = formatError(error);
   }
 
   return { proxy, proxyStatus, proxyDetails, tokenPath, tokenSummary };
@@ -979,9 +979,26 @@ function isTokenStateValid(tokenState: TokenState | null): tokenState is TokenSt
 }
 
 function formatError(error: unknown): string {
-  return String(error instanceof Error ? error.message ?? error : error)
+  const cleaned = String(error instanceof Error ? error.message ?? error : error)
     .replace(/\x1b\[[0-9;]*[mGKHFABCDJ]/g, "")
     .trim();
+  return appendProxyRunningHint(cleaned);
+}
+
+function appendProxyRunningHint(message: string): string {
+  const normalized = message.toLowerCase();
+  const isConnectivityError =
+    normalized.includes("unable to connect") ||
+    normalized.includes("actively refused") ||
+    normalized.includes("econnrefused") ||
+    normalized.includes("fetch failed");
+  const alreadyHasHint =
+    normalized.includes("proxy is running") ||
+    normalized.includes("start:proxy");
+  if (!isConnectivityError || alreadyHasHint) {
+    return message;
+  }
+  return `${message} Check that the proxy is running (bun run start:proxy).`;
 }
 
 function parseArgs(args: string[]): ParsedArgs {
