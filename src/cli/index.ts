@@ -62,7 +62,9 @@ function showUsage(): number {
   console.log('       bun src/cli/index.ts token set [--token "..."]');
   console.log("       bun src/cli/index.ts token clear");
   console.log("       bun src/cli/index.ts token status");
-  console.log("       bun src/cli/index.ts token fetch");
+  console.log(
+    "       bun src/cli/index.ts token fetch [--quiet] [--print-token]",
+  );
   return 0;
 }
 
@@ -107,12 +109,33 @@ async function runTokenCommand(parsedArgs: ParsedArgs): Promise<number> {
   }
 
   if (sub === "fetch") {
-    console.log("[token fetch] Starting Playwright token capture...");
+    const quiet =
+      parsedArgs.options.quiet !== undefined ||
+      parsedArgs.options.q !== undefined;
+    const shouldPrintToken =
+      parsedArgs.options["print-token"] !== undefined ||
+      parsedArgs.options["show-token"] !== undefined;
+
+    if (!quiet) {
+      console.log("[token fetch] Starting Playwright token capture...");
+    }
     const storageStatePath = await getBrowserStatePath();
-    console.log(`[token fetch] Token path: ${tokenPath}`);
-    console.log(`[token fetch] Browser state path: ${storageStatePath}`);
+    if (!quiet) {
+      console.log(`[token fetch] Token path: ${tokenPath}`);
+      console.log(`[token fetch] Browser state path: ${storageStatePath}`);
+    }
     try {
-      await fetchTokenWithPlaywright(tokenPath, storageStatePath);
+      await fetchTokenWithPlaywright(tokenPath, storageStatePath, {
+        quiet,
+      });
+      if (shouldPrintToken) {
+        const tokenState = await loadToken(tokenPath);
+        if (!tokenState?.token?.trim()) {
+          console.error("[token fetch] No token found after fetch.");
+          return 1;
+        }
+        console.log(tokenState.token);
+      }
     } catch (error) {
       const msg = String(
         error instanceof Error ? (error.message ?? error) : error,
@@ -614,9 +637,32 @@ async function sendChatTurn(
   errorMessage: string | null;
   isAuthError: boolean;
 }> {
-  return session.apiMode === "responses"
-    ? sendResponsesTurn(proxyBaseUrl, token, model, prompt, session, onDelta)
-    : sendCompletionsTurn(proxyBaseUrl, token, model, prompt, session, onDelta);
+  try {
+    return session.apiMode === "responses"
+      ? await sendResponsesTurn(
+          proxyBaseUrl,
+          token,
+          model,
+          prompt,
+          session,
+          onDelta,
+        )
+      : await sendCompletionsTurn(
+          proxyBaseUrl,
+          token,
+          model,
+          prompt,
+          session,
+          onDelta,
+        );
+  } catch (error) {
+    return {
+      conversationId: session.conversationId,
+      responseId: session.previousResponseId,
+      errorMessage: formatError(error) || "Request failed.",
+      isAuthError: false,
+    };
+  }
 }
 
 async function sendCompletionsTurn(
@@ -903,7 +949,9 @@ async function ensureValidTokenWithAutoFetch(
   console.log(`[token] Browser state path: ${storageStatePath}`);
 
   try {
-    await fetchTokenWithPlaywright(tokenPath, storageStatePath);
+    await fetchTokenWithPlaywright(tokenPath, storageStatePath, {
+      quiet: true,
+    });
     const fetchedTokenState = await loadToken(tokenPath);
     if (isTokenStateValid(fetchedTokenState)) {
       console.log("[token] Automatic token fetch succeeded.");

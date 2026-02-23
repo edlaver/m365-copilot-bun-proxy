@@ -8,9 +8,17 @@ const NODE_RUNNER_FILENAME = "playwright-token.node.mjs";
 export async function fetchTokenWithPlaywright(
   tokenPath: string,
   storageStatePath: string,
+  options?: {
+    quiet?: boolean;
+  },
 ): Promise<void> {
   const runnerPath = await resolveNodeRunnerPath();
-  await runNodePlaywrightFetch(runnerPath, tokenPath, storageStatePath);
+  await runNodePlaywrightFetch(
+    runnerPath,
+    tokenPath,
+    storageStatePath,
+    options?.quiet ?? false,
+  );
 }
 
 async function resolveNodeRunnerPath(): Promise<string> {
@@ -41,6 +49,7 @@ function runNodePlaywrightFetch(
   runnerPath: string,
   tokenPath: string,
   storageStatePath: string,
+  quiet: boolean,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -53,11 +62,34 @@ function runNodePlaywrightFetch(
         storageStatePath,
       ],
       {
-        stdio: "inherit",
+        stdio: "pipe",
         env: process.env,
         windowsHide: false,
       },
     );
+    let output = "";
+    const pushOutput = (chunk: string): void => {
+      output += chunk;
+      if (output.length > 32_768) {
+        output = output.slice(output.length - 32_768);
+      }
+    };
+
+    child.stdout?.on("data", (data) => {
+      const chunk = String(data);
+      pushOutput(chunk);
+      if (!quiet) {
+        process.stdout.write(chunk);
+      }
+    });
+
+    child.stderr?.on("data", (data) => {
+      const chunk = String(data);
+      pushOutput(chunk);
+      if (!quiet) {
+        process.stderr.write(chunk);
+      }
+    });
 
     child.once("error", (error) => {
       reject(
@@ -74,7 +106,7 @@ function runNodePlaywrightFetch(
       }
       reject(
         new Error(
-          `Playwright runner exited with code ${String(code)}${signal ? ` (signal: ${signal})` : ""}.`,
+          `Playwright runner exited with code ${String(code)}${signal ? ` (signal: ${signal})` : ""}.${output.trim() ? `\n${output.trim()}` : ""}`,
         ),
       );
     });
