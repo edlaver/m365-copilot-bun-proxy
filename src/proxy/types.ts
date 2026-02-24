@@ -56,6 +56,7 @@ export type OpenAiAssistantResponse = {
   content: string | null;
   toolCalls: OpenAiAssistantToolCall[];
   finishReason: string;
+  strictToolErrorMessage?: string | null;
 };
 
 export type ParsedOpenAiRequest = {

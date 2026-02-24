@@ -64,6 +64,82 @@ CONFIG__substrate__hubPath=wss://substrate.office.com/m365Copilot/Chathub bun ru
 - `DELETE /v1/responses/{response_id}`
 - `DELETE /openai/v1/responses/{response_id}`
 
+## Chat Completions Tool Calling
+
+The proxy supports OpenAI-style `tools` and `tool_choice` for `POST /v1/chat/completions`.
+
+Example request:
+
+```bash
+curl -s http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "x-m365-transport: substrate" \
+  -d '{
+    "model": "m365-copilot",
+    "messages": [
+      { "role": "user", "content": "What is the weather in London?" }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Lookup weather by city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": { "type": "string" }
+            },
+            "required": ["city"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto"
+  }'
+```
+
+Example tool-call response shape:
+
+```json
+{
+  "id": "chatcmpl_...",
+  "object": "chat.completion",
+  "created": 1739986369,
+  "model": "m365-copilot",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_...",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"London\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ]
+}
+```
+
+Strictness behavior:
+
+- If `tool_choice` is `required` or a specific `function`, the proxy returns `400 invalid_tool_output` when no valid tool-call JSON can be extracted from assistant output.
+- If `tool_choice` is `auto` (or tools are not strictly required), the proxy falls back to a normal assistant text completion when tool-call JSON is not found.
+
+Input normalization notes:
+
+- JSON-stringified `message.content`, tool payloads, and function arguments are parsed best-effort and re-serialized to canonical minified JSON when valid.
+- Assistant message content containing serialized `tool_calls` structures is preserved as tool-call context for downstream Copilot prompt construction.
+
 ## Responses API usage
 
 Create response:

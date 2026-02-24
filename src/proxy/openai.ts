@@ -111,16 +111,25 @@ export function buildAssistantResponse(
   assistantText: string,
 ): OpenAiAssistantResponse {
   const normalizedText = assistantText ?? "";
-  if (
+  const shouldTryToolCalls =
     request.tooling.tools.length > 0 &&
-    request.tooling.toolChoiceMode !== ToolChoiceModes.None
-  ) {
-    const toolCalls = tryExtractToolCalls(normalizedText, request.tooling);
-    if (toolCalls.length > 0) {
+    request.tooling.toolChoiceMode !== ToolChoiceModes.None;
+  if (shouldTryToolCalls) {
+    const extraction = tryExtractToolCalls(normalizedText, request.tooling);
+    if (extraction.length > 0) {
       return {
         content: null,
-        toolCalls,
+        toolCalls: extraction,
         finishReason: "tool_calls",
+        strictToolErrorMessage: null,
+      };
+    }
+    if (requiresStrictToolOutput(request.tooling)) {
+      return {
+        content: null,
+        toolCalls: [],
+        finishReason: "stop",
+        strictToolErrorMessage: buildStrictToolErrorMessage(request.tooling),
       };
     }
   }
@@ -129,7 +138,25 @@ export function buildAssistantResponse(
     content: normalizeStructuredContent(normalizedText, request.responseFormat),
     toolCalls: [],
     finishReason: "stop",
+    strictToolErrorMessage: null,
   };
+}
+
+function requiresStrictToolOutput(tooling: OpenAiTooling): boolean {
+  return (
+    tooling.toolChoiceMode === ToolChoiceModes.Required ||
+    tooling.toolChoiceMode === ToolChoiceModes.Function
+  );
+}
+
+function buildStrictToolErrorMessage(tooling: OpenAiTooling): string {
+  if (
+    tooling.toolChoiceMode === ToolChoiceModes.Function &&
+    tooling.toolChoiceFunctionName
+  ) {
+    return `Tool output was required, but no valid tool call for '${tooling.toolChoiceFunctionName}' was found in assistant output JSON.`;
+  }
+  return "Tool output was required, but no valid tool_calls JSON payload was found in assistant output.";
 }
 
 function tryExtractToolCalls(
@@ -162,8 +189,86 @@ function extractToolCallsFromNode(node: JsonValue, tooling: OpenAiTooling): Open
     return extractToolCallsFromArray(toolCalls, tooling);
   }
 
+  const wrappedMessage = node.message;
+  if (isJsonObject(wrappedMessage) && Array.isArray(wrappedMessage.tool_calls)) {
+    return extractToolCallsFromArray(wrappedMessage.tool_calls, tooling);
+  }
+
+  const wrappedFromChoices = extractToolCallsFromChatCompletionNode(node, tooling);
+  if (wrappedFromChoices.length > 0) {
+    return wrappedFromChoices;
+  }
+
+  const wrappedFromOutput = extractToolCallsFromResponsesNode(node, tooling);
+  if (wrappedFromOutput.length > 0) {
+    return wrappedFromOutput;
+  }
+
   const singleCall = tryBuildToolCall(node, tooling);
   return singleCall ? [singleCall] : [];
+}
+
+function extractToolCallsFromChatCompletionNode(
+  node: JsonObject,
+  tooling: OpenAiTooling,
+): OpenAiAssistantToolCall[] {
+  const choices = node.choices;
+  if (!Array.isArray(choices)) {
+    return [];
+  }
+  for (const choice of choices) {
+    if (!isJsonObject(choice)) {
+      continue;
+    }
+    const message = choice.message;
+    if (isJsonObject(message) && Array.isArray(message.tool_calls)) {
+      const calls = extractToolCallsFromArray(message.tool_calls, tooling);
+      if (calls.length > 0) {
+        return calls;
+      }
+    }
+    const delta = choice.delta;
+    if (isJsonObject(delta) && Array.isArray(delta.tool_calls)) {
+      const calls = extractToolCallsFromArray(delta.tool_calls, tooling);
+      if (calls.length > 0) {
+        return calls;
+      }
+    }
+  }
+  return [];
+}
+
+function extractToolCallsFromResponsesNode(
+  node: JsonObject,
+  tooling: OpenAiTooling,
+): OpenAiAssistantToolCall[] {
+  const output = node.output;
+  if (!Array.isArray(output)) {
+    return [];
+  }
+
+  const toolCalls: OpenAiAssistantToolCall[] = [];
+  for (const item of output) {
+    if (!isJsonObject(item)) {
+      continue;
+    }
+    const type = (pickString(item.type) ?? "").toLowerCase();
+    if (type !== "function_call") {
+      continue;
+    }
+    const toolCall = tryBuildToolCall(
+      {
+        id: pickString(item.call_id, item.tool_call_id, item.id) ?? null,
+        name: pickString(item.name) ?? null,
+        arguments: item.arguments ?? null,
+      },
+      tooling,
+    );
+    if (toolCall) {
+      toolCalls.push(toolCall);
+    }
+  }
+  return toolCalls;
 }
 
 function extractToolCallsFromArray(
@@ -277,24 +382,25 @@ function tryParseJsonNode(rawText: string): JsonValue | null {
 }
 
 function* enumerateJsonCandidates(rawText: string): Iterable<string> {
-  if (!rawText.trim()) {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
     return;
   }
-  yield rawText.trim();
+  yield trimmed;
 
   let cursor = 0;
   while (cursor < rawText.length) {
     const fenceStart = rawText.indexOf("```", cursor);
     if (fenceStart < 0) {
-      return;
+      break;
     }
     const bodyStart = rawText.indexOf("\n", fenceStart + 3);
     if (bodyStart < 0) {
-      return;
+      break;
     }
     const fenceEnd = rawText.indexOf("```", bodyStart + 1);
     if (fenceEnd < 0) {
-      return;
+      break;
     }
     const body = rawText.slice(bodyStart + 1, fenceEnd).trim();
     if (body) {
@@ -302,6 +408,63 @@ function* enumerateJsonCandidates(rawText: string): Iterable<string> {
     }
     cursor = fenceEnd + 3;
   }
+
+  const balanced = extractFirstBalancedJsonSegment(rawText);
+  if (balanced && balanced !== trimmed) {
+    yield balanced;
+  }
+}
+
+function extractFirstBalancedJsonSegment(rawText: string): string | null {
+  const start = rawText.search(/[\{\[]/);
+  if (start < 0) {
+    return null;
+  }
+  const opening = rawText[start];
+  if (opening !== "{" && opening !== "[") {
+    return null;
+  }
+  const closing = opening === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < rawText.length; index++) {
+    const ch = rawText[index];
+    if (!ch) {
+      continue;
+    }
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === opening) {
+      depth++;
+      continue;
+    }
+    if (ch === closing) {
+      depth--;
+      if (depth === 0) {
+        return rawText.slice(start, index + 1).trim();
+      }
+    }
+  }
+  return null;
 }
 
 function pickString(...values: Array<JsonValue | undefined>): string | null {
@@ -375,4 +538,3 @@ export function buildToolCallsDelta(toolCalls: OpenAiAssistantToolCall[]): JsonV
 export function cloneJsonObject(value: JsonObject): JsonObject {
   return cloneJsonValue(value);
 }
-

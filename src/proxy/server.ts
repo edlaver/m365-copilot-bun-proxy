@@ -47,6 +47,7 @@ import {
   TransportNames,
   type JsonObject,
   type ChatResult,
+  type OpenAiAssistantResponse,
   type ParsedOpenAiRequest,
   type ParsedResponsesRequest,
   type WrapperOptions,
@@ -301,6 +302,13 @@ async function handleChat(
         parsedRequest,
         assistantText,
       );
+      const strictToolError = await tryWriteStrictToolOutputError(
+        services,
+        assistantResponse,
+      );
+      if (strictToolError) {
+        return strictToolError;
+      }
       return buildAssistantStreamResponse(
         services,
         parsedRequest.model,
@@ -382,6 +390,13 @@ async function handleChat(
     parsedRequest,
     assistantText,
   );
+  const strictToolError = await tryWriteStrictToolOutputError(
+    services,
+    assistantResponse,
+  );
+  if (strictToolError) {
+    return strictToolError;
+  }
   const body = JSON.stringify(
     buildChatCompletion(
       parsedRequest.model,
@@ -594,6 +609,13 @@ async function handleResponsesCreate(
         ) ??
         "";
       const assistantResponse = buildAssistantResponse(baseRequest, assistantText);
+      const strictToolError = await tryWriteStrictToolOutputError(
+        services,
+        assistantResponse,
+      );
+      if (strictToolError) {
+        return strictToolError;
+      }
       return buildBufferedResponsesStreamResponse(
         services,
         parsedRequest,
@@ -667,6 +689,13 @@ async function handleResponsesCreate(
     extractCopilotAssistantText(chatResponse.responseJson, baseRequest.promptText) ??
     "";
   const assistantResponse = buildAssistantResponse(baseRequest, assistantText);
+  const strictToolError = await tryWriteStrictToolOutputError(
+    services,
+    assistantResponse,
+  );
+  if (strictToolError) {
+    return strictToolError;
+  }
   const responseId = createOpenAiResponseId();
   const createdAt = nowUnix();
   const responseBody = buildOpenAiResponseFromAssistant(
@@ -1224,6 +1253,23 @@ async function resolveAuthorizationHeader(
 ): Promise<string | null> {
   return services.tokenProvider.resolveAuthorizationHeader(
     request.headers.get("authorization"),
+  );
+}
+
+async function tryWriteStrictToolOutputError(
+  services: Services,
+  assistantResponse: OpenAiAssistantResponse,
+): Promise<Response | null> {
+  const message = assistantResponse.strictToolErrorMessage;
+  if (!message) {
+    return null;
+  }
+  return writeOpenAiError(
+    services,
+    400,
+    message,
+    "invalid_request_error",
+    "invalid_tool_output",
   );
 }
 

@@ -163,8 +163,11 @@ export function tryParseOpenAiRequest(
     const role = (tryGetString(message, "role") ?? "user").toLowerCase();
     let content = extractMessageContent(message.content, role);
 
-    if (!content && role === "assistant" && Array.isArray(message.tool_calls)) {
-      content = convertToolCallsToContextText(message.tool_calls);
+    if (role === "assistant") {
+      const assistantToolCalls = tryExtractAssistantToolCalls(message, content);
+      if (assistantToolCalls.length > 0) {
+        content = convertToolCallsToContextText(assistantToolCalls);
+      }
     }
 
     if (!content && role === "tool") {
@@ -174,7 +177,7 @@ export function tryParseOpenAiRequest(
       if (toolCallId) {
         prefix += `[${toolCallId}]`;
       }
-      const toolPayload = tryGetString(message, "content");
+      const toolPayload = stringifyJsonValue(message.content);
       if (toolPayload) {
         content = `${prefix}: ${toolPayload}`;
       }
@@ -456,7 +459,8 @@ function mapResponsesReasoningEffort(requestJson: JsonObject): string | null {
 
 function stringifyJsonValue(value: JsonValue | undefined): string {
   if (typeof value === "string") {
-    return value;
+    const normalized = normalizeJsonLikeString(value);
+    return normalized ?? value;
   }
   if (value === undefined || value === null) {
     return "";
@@ -472,7 +476,12 @@ function normalizeFunctionArguments(value: JsonValue | undefined): string | null
     return null;
   }
   if (typeof value === "string") {
-    return value.trim() ? value : "{}";
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return "{}";
+    }
+    const parsed = tryParseJsonValueFromText(trimmed);
+    return parsed !== null ? JSON.stringify(parsed) : trimmed;
   }
   return JSON.stringify(value);
 }
@@ -485,13 +494,15 @@ function extractMessageContent(
     return "";
   }
   if (typeof contentNode === "string") {
-    return contentNode;
+    const normalized = normalizeJsonLikeString(contentNode);
+    return normalized ?? contentNode;
   }
   if (isJsonObject(contentNode)) {
     const directText =
       tryGetString(contentNode, "text") ?? tryGetString(contentNode, "value");
     if (directText) {
-      return directText;
+      const normalized = normalizeJsonLikeString(directText);
+      return normalized ?? directText;
     }
     const imageFromObject = extractImageReference(contentNode);
     if (imageFromObject) {
@@ -507,7 +518,8 @@ function extractMessageContent(
   const imageParts: string[] = [];
   for (const part of contentNode) {
     if (typeof part === "string" && part.trim()) {
-      textParts.push(part.trim());
+      const normalized = normalizeJsonLikeString(part.trim());
+      textParts.push(normalized ?? part.trim());
       continue;
     }
     if (!isJsonObject(part)) {
@@ -526,7 +538,8 @@ function extractMessageContent(
         partText = tryGetString(nestedText, "value");
       }
       if (partText) {
-        textParts.push(partText.trim());
+        const normalized = normalizeJsonLikeString(partText.trim());
+        textParts.push(normalized ?? partText.trim());
         continue;
       }
     }
@@ -555,6 +568,133 @@ function extractMessageContent(
     return imageSuffix.trimStart();
   }
   return `${textParts.join("\n")}${imageSuffix}`;
+}
+
+function tryExtractAssistantToolCalls(
+  message: JsonObject,
+  extractedContent: string,
+): JsonObject[] {
+  if (Array.isArray(message.tool_calls)) {
+    return message.tool_calls.filter(isJsonObject);
+  }
+  if (!extractedContent.trim()) {
+    return [];
+  }
+
+  const parsedContent = tryParseJsonValueFromText(extractedContent);
+  if (parsedContent === null) {
+    return [];
+  }
+  return extractToolCallsFromJsonNode(parsedContent);
+}
+
+function extractToolCallsFromJsonNode(node: JsonValue): JsonObject[] {
+  if (Array.isArray(node)) {
+    return node.filter(isJsonObject).filter(isToolCallLikeObject);
+  }
+  if (!isJsonObject(node)) {
+    return [];
+  }
+
+  if (Array.isArray(node.tool_calls)) {
+    return node.tool_calls.filter(isJsonObject).filter(isToolCallLikeObject);
+  }
+
+  const wrappedFromMessage = node.message;
+  if (isJsonObject(wrappedFromMessage) && Array.isArray(wrappedFromMessage.tool_calls)) {
+    return wrappedFromMessage.tool_calls
+      .filter(isJsonObject)
+      .filter(isToolCallLikeObject);
+  }
+
+  const wrappedFromChoices = extractToolCallsFromChatCompletionNode(node);
+  if (wrappedFromChoices.length > 0) {
+    return wrappedFromChoices;
+  }
+
+  const wrappedFromOutput = extractToolCallsFromResponsesOutputNode(node);
+  if (wrappedFromOutput.length > 0) {
+    return wrappedFromOutput;
+  }
+
+  if (tryGetString(node, "name")) {
+    return [node];
+  }
+
+  const functionObject = node.function;
+  if (isJsonObject(functionObject) && tryGetString(functionObject, "name")) {
+    return [node];
+  }
+
+  return [];
+}
+
+function isToolCallLikeObject(value: JsonObject): boolean {
+  const functionObject = isJsonObject(value.function) ? value.function : null;
+  const type = (tryGetString(value, "type") ?? "").toLowerCase();
+  return Boolean(
+    tryGetString(value, "name") ||
+      tryGetString(value, "tool_name") ||
+      tryGetString(functionObject, "name") ||
+      type === "function" ||
+      type === "function_call",
+  );
+}
+
+function extractToolCallsFromChatCompletionNode(node: JsonObject): JsonObject[] {
+  const choices = node.choices;
+  if (!Array.isArray(choices)) {
+    return [];
+  }
+  for (const choice of choices) {
+    if (!isJsonObject(choice)) {
+      continue;
+    }
+    const message = choice.message;
+    if (isJsonObject(message) && Array.isArray(message.tool_calls)) {
+      return message.tool_calls.filter(isJsonObject);
+    }
+    const delta = choice.delta;
+    if (isJsonObject(delta) && Array.isArray(delta.tool_calls)) {
+      return delta.tool_calls.filter(isJsonObject);
+    }
+  }
+  return [];
+}
+
+function extractToolCallsFromResponsesOutputNode(node: JsonObject): JsonObject[] {
+  const output = node.output;
+  if (!Array.isArray(output)) {
+    return [];
+  }
+
+  const toolCalls: JsonObject[] = [];
+  for (const item of output) {
+    if (!isJsonObject(item)) {
+      continue;
+    }
+    const type = (tryGetString(item, "type") ?? "").toLowerCase();
+    if (type !== "function_call") {
+      continue;
+    }
+    const name = tryGetString(item, "name");
+    if (!name) {
+      continue;
+    }
+    toolCalls.push({
+      id:
+        tryGetString(item, "call_id") ??
+        tryGetString(item, "tool_call_id") ??
+        tryGetString(item, "id") ??
+        `call_${toolCalls.length + 1}`,
+      type: "function",
+      function: {
+        name,
+        arguments: normalizeFunctionArguments(item.arguments) ?? "{}",
+      },
+    });
+  }
+  return toolCalls;
 }
 
 function parseTooling(requestJson: JsonObject): OpenAiTooling {
@@ -759,7 +899,11 @@ function appendOpenAiCompatibilityContext(
 ): void {
   if (tooling.tools.length > 0) {
     context.push({
-      text: 'If a tool is needed, respond ONLY as JSON with this shape: {"tool_calls":[{"name":"<tool-name>","arguments":{...}}]}. Do not wrap the JSON in markdown.',
+      text: 'If you call a tool, respond ONLY as minified JSON with this exact shape: {"tool_calls":[{"name":"<tool-name>","arguments":{...}}]}. No markdown, no prose, no extra keys.',
+      description: "OpenAI tool-calling contract",
+    });
+    context.push({
+      text: "If no tool call is needed, return a normal assistant response (unless response_format requires JSON-only output).",
       description: "OpenAI tool-calling contract",
     });
     context.push({
@@ -780,7 +924,7 @@ function appendOpenAiCompatibilityContext(
       });
     } else if (tooling.toolChoiceMode === ToolChoiceModes.Required) {
       context.push({
-        text: "At least one tool call is required before any natural-language answer.",
+        text: "A tool call is required in this turn. Do not return plain assistant text first.",
         description: "Tool choice",
       });
     } else if (
@@ -788,7 +932,7 @@ function appendOpenAiCompatibilityContext(
       tooling.toolChoiceFunctionName
     ) {
       context.push({
-        text: `Only call tool '${tooling.toolChoiceFunctionName}'.`,
+        text: `You must call only tool '${tooling.toolChoiceFunctionName}' in this turn. Do not return plain assistant text first.`,
         description: "Tool choice",
       });
     }
@@ -826,6 +970,121 @@ function appendOpenAiCompatibilityContext(
       description: "Generation hint",
     });
   }
+}
+
+function normalizeJsonLikeString(rawText: string): string | null {
+  const parsed = tryParseJsonValueFromText(rawText);
+  if (parsed === null) {
+    return null;
+  }
+  return JSON.stringify(parsed);
+}
+
+function tryParseJsonValueFromText(rawText: string): JsonValue | null {
+  for (const candidate of enumerateJsonCandidates(rawText)) {
+    const parsed = tryParseJsonValue(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function tryParseJsonValue(rawText: string): JsonValue | null {
+  if (!rawText.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(rawText) as JsonValue;
+  } catch {
+    return null;
+  }
+}
+
+function* enumerateJsonCandidates(rawText: string): Iterable<string> {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return;
+  }
+  yield trimmed;
+
+  let cursor = 0;
+  while (cursor < rawText.length) {
+    const fenceStart = rawText.indexOf("```", cursor);
+    if (fenceStart < 0) {
+      break;
+    }
+    const bodyStart = rawText.indexOf("\n", fenceStart + 3);
+    if (bodyStart < 0) {
+      break;
+    }
+    const fenceEnd = rawText.indexOf("```", bodyStart + 1);
+    if (fenceEnd < 0) {
+      break;
+    }
+    const body = rawText.slice(bodyStart + 1, fenceEnd).trim();
+    if (body) {
+      yield body;
+    }
+    cursor = fenceEnd + 3;
+  }
+
+  const balanced = extractFirstBalancedJsonSegment(rawText);
+  if (balanced && balanced !== trimmed) {
+    yield balanced;
+  }
+}
+
+function extractFirstBalancedJsonSegment(rawText: string): string | null {
+  const start = rawText.search(/[\{\[]/);
+  if (start < 0) {
+    return null;
+  }
+  const opening = rawText[start];
+  if (opening !== "{" && opening !== "[") {
+    return null;
+  }
+  const closing = opening === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < rawText.length; index++) {
+    const ch = rawText[index];
+    if (!ch) {
+      continue;
+    }
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === opening) {
+      depth++;
+      continue;
+    }
+    if (ch === closing) {
+      depth--;
+      if (depth === 0) {
+        return rawText.slice(start, index + 1).trim();
+      }
+    }
+  }
+  return null;
 }
 
 function extractImageReference(partObject: JsonObject): string | null {
