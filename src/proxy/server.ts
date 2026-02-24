@@ -265,10 +265,33 @@ async function handleChat(
     }
     return graphClient.chat(authorizationHeader, conversationId!, graphPayload);
   };
+  const executeChatTurnWithRecovery = async (): Promise<ChatResult> => {
+    let result = await executeChatTurn();
+    if (
+      shouldRetrySubstrateNoAssistantContent(
+        selectedTransport,
+        createdConversation,
+        result,
+      )
+    ) {
+      const createRetryConversation = substrateClient.createConversation();
+      if (createRetryConversation.isSuccess && createRetryConversation.conversationId) {
+        conversationId = createRetryConversation.conversationId;
+        createdConversation = true;
+        responseHeaders.set("x-m365-conversation-id", conversationId);
+        responseHeaders.set("x-m365-conversation-created", "true");
+        if (scopedConversationKey) {
+          conversationStore.set(scopedConversationKey, conversationId);
+        }
+        result = await executeChatTurn();
+      }
+    }
+    return result;
+  };
 
   if (parsedRequest.stream) {
     if (shouldBufferAssistant) {
-      const buffered = await executeChatTurn();
+      const buffered = await executeChatTurnWithRecovery();
       if (!buffered.isSuccess) {
         return writeFromUpstreamFailure(
           services,
@@ -356,7 +379,7 @@ async function handleChat(
     );
   }
 
-  const chatResponse = await executeChatTurn();
+  const chatResponse = await executeChatTurnWithRecovery();
   if (!chatResponse.isSuccess) {
     return writeFromUpstreamFailure(
       services,
@@ -575,10 +598,33 @@ async function handleResponsesCreate(
     }
     return graphClient.chat(authorizationHeader, conversationId!, graphPayload);
   };
+  const executeChatTurnWithRecovery = async (): Promise<ChatResult> => {
+    let result = await executeChatTurn();
+    if (
+      shouldRetrySubstrateNoAssistantContent(
+        selectedTransport,
+        createdConversation,
+        result,
+      )
+    ) {
+      const createRetryConversation = substrateClient.createConversation();
+      if (createRetryConversation.isSuccess && createRetryConversation.conversationId) {
+        conversationId = createRetryConversation.conversationId;
+        createdConversation = true;
+        responseHeaders.set("x-m365-conversation-id", conversationId);
+        responseHeaders.set("x-m365-conversation-created", "true");
+        if (scopedConversationKey) {
+          conversationStore.set(scopedConversationKey, conversationId);
+        }
+        result = await executeChatTurn();
+      }
+    }
+    return result;
+  };
 
   if (baseRequest.stream) {
     if (shouldBufferAssistant) {
-      const buffered = await executeChatTurn();
+      const buffered = await executeChatTurnWithRecovery();
       if (!buffered.isSuccess) {
         return writeFromUpstreamFailure(
           services,
@@ -661,7 +707,7 @@ async function handleResponsesCreate(
     );
   }
 
-  const chatResponse = await executeChatTurn();
+  const chatResponse = await executeChatTurnWithRecovery();
   if (!chatResponse.isSuccess) {
     return writeFromUpstreamFailure(
       services,
@@ -1271,6 +1317,26 @@ async function tryWriteStrictToolOutputError(
     "invalid_request_error",
     "invalid_tool_output",
   );
+}
+
+function shouldRetrySubstrateNoAssistantContent(
+  transport: string,
+  createdConversation: boolean,
+  chatResult: ChatResult,
+): boolean {
+  if (transport !== TransportNames.Substrate || !createdConversation) {
+    return false;
+  }
+  if (chatResult.isSuccess || chatResult.statusCode !== 502) {
+    return false;
+  }
+  const message = extractGraphErrorMessage(chatResult.rawBody);
+  if (!message) {
+    return false;
+  }
+  return message
+    .toLowerCase()
+    .includes("substrate chat returned no assistant content");
 }
 
 function clampListLimit(raw: string | null): number {
