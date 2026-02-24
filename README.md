@@ -70,7 +70,6 @@ Create response:
 
 ```bash
 curl -s http://localhost:4000/v1/responses \
-  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "x-m365-transport: substrate" \
   -d '{
@@ -83,7 +82,6 @@ Continue a conversation using `previous_response_id`:
 
 ```bash
 curl -s http://localhost:4000/v1/responses \
-  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "x-m365-transport: substrate" \
   -d '{
@@ -104,6 +102,8 @@ Streaming (`stream: true`) emits SSE events:
 - `response.completed`
 - `error` (SSE error event on stream failure)
 
+If `Authorization` is missing or empty on chat/responses requests, the proxy now attempts to auto-acquire a token via Playwright and then retries with that token. You can still pass an explicit bearer token when needed.
+
 ## Build executable
 
 ```bash
@@ -121,6 +121,8 @@ bun run cli -- chat
 bun run cli -- chat --api responses
 bun run cli -- token set --token "<jwt>"
 ```
+
+By default, CLI chat requests do not send an Authorization header. The proxy handles token acquisition when needed. Use `--token` or `YARPILOT_TOKEN` only when you want to force a specific token from the CLI.
 
 In chat mode, the CLI supports these slash commands:
 

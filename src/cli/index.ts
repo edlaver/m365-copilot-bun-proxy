@@ -9,11 +9,9 @@ import {
 import { readSseEvents, tryParseJsonObject } from "../proxy/utils";
 import { fetchTokenWithPlaywright } from "./playwright-token";
 import {
-  type TokenState,
   type TokenSummary,
   buildTokenSummary,
   deleteToken,
-  ensureValidToken,
   getBrowserStatePath,
   getTokenPath,
   loadToken,
@@ -222,13 +220,18 @@ async function runChatCommand(
   );
 
   const tokenPath = await getTokenPath();
-  const cachedToken = await loadToken(tokenPath);
-  let token = await ensureValidTokenWithAutoFetch(
-    cachedToken,
-    tokenPath,
-    providedToken,
-    "chat startup",
-  );
+  let token: { token: string; expiresAtUtc: Date } = {
+    token: "",
+    expiresAtUtc: new Date(0),
+  };
+  if (providedToken) {
+    try {
+      token = parseTokenOrThrow(providedToken);
+    } catch (error) {
+      console.error(`Invalid token: ${String(error)}`);
+      return 1;
+    }
+  }
 
   if (oneShotMessage?.trim()) {
     const oneShotSession: SessionState = {
@@ -245,30 +248,6 @@ async function runChatCommand(
       () => {},
     );
     if (result.errorMessage) {
-      if (result.isAuthError) {
-        console.log(
-          "[token] One-shot request returned auth error. Refreshing token and retrying once...",
-        );
-        token = await ensureValidTokenWithAutoFetch(
-          await loadToken(tokenPath),
-          tokenPath,
-          null,
-          "one-shot authentication failure",
-        );
-        const retryResult = await sendChatTurn(
-          proxy,
-          token.token,
-          model,
-          oneShotMessage,
-          oneShotSession,
-          () => {},
-        );
-        if (retryResult.errorMessage) {
-          console.error(`Error: ${retryResult.errorMessage}`);
-          return 1;
-        }
-        return 0;
-      }
       console.error(`Error: ${result.errorMessage}`);
       return 1;
     }
@@ -317,17 +296,6 @@ async function runChatCommand(
       }
       continue;
     }
-    if (
-      !token.token.trim() ||
-      token.expiresAtUtc.getTime() <= Date.now() + 60_000
-    ) {
-      token = await ensureValidTokenWithAutoFetch(
-        await loadToken(tokenPath),
-        tokenPath,
-        null,
-        "token expired",
-      );
-    }
     const result = await sendChatTurn(
       proxy,
       token.token,
@@ -341,18 +309,6 @@ async function runChatCommand(
     process.stdout.write("\n");
     if (result.errorMessage) {
       console.error(`Error: ${result.errorMessage}`);
-      if (result.isAuthError) {
-        try {
-          token = await ensureValidTokenWithAutoFetch(
-            await loadToken(tokenPath),
-            tokenPath,
-            null,
-            "authentication failure",
-          );
-        } catch (error) {
-          console.error(`Token refresh failed: ${String(error)}`);
-        }
-      }
     } else {
       session.conversationId = result.conversationId ?? session.conversationId;
       session.previousResponseId =
@@ -478,18 +434,6 @@ async function runChatTui(
       return;
     }
 
-    if (
-      !token.token.trim() ||
-      token.expiresAtUtc.getTime() <= Date.now() + 60_000
-    ) {
-      token = await ensureValidTokenWithAutoFetch(
-        await loadToken(tokenPath),
-        tokenPath,
-        null,
-        "token expired",
-      );
-    }
-
     busy = true;
     appendOutput(`\nYou: ${prompt}\nCopilot: `);
     setStatus(`Waiting for response... API: ${session.apiMode}`);
@@ -509,19 +453,6 @@ async function runChatTui(
     if (result.errorMessage) {
       appendOutput(`Error: ${result.errorMessage}\n`);
       setStatus("Request failed.");
-      if (result.isAuthError) {
-        try {
-          token = await ensureValidTokenWithAutoFetch(
-            await loadToken(tokenPath),
-            tokenPath,
-            null,
-            "authentication failure",
-          );
-          setStatus("Token refreshed.");
-        } catch (error) {
-          appendOutput(`Token refresh failed: ${String(error)}\n`);
-        }
-      }
     } else {
       session.conversationId = result.conversationId ?? session.conversationId;
       session.previousResponseId =
@@ -683,10 +614,13 @@ async function sendCompletionsTurn(
     proxyBaseUrl.endsWith("/") ? proxyBaseUrl : `${proxyBaseUrl}/`,
   );
   const headers = new Headers({
-    Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
     "x-m365-transport": "substrate",
   });
+  const authHeaderValue = normalizeAuthorizationHeaderValue(token);
+  if (authHeaderValue) {
+    headers.set("Authorization", authHeaderValue);
+  }
   if (session.conversationId) {
     headers.set("x-m365-conversation-id", session.conversationId);
   }
@@ -771,10 +705,13 @@ async function sendResponsesTurn(
     proxyBaseUrl.endsWith("/") ? proxyBaseUrl : `${proxyBaseUrl}/`,
   );
   const headers = new Headers({
-    Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
     "x-m365-transport": "substrate",
   });
+  const authHeaderValue = normalizeAuthorizationHeaderValue(token);
+  if (authHeaderValue) {
+    headers.set("Authorization", authHeaderValue);
+  }
   if (session.conversationId) {
     headers.set("x-m365-conversation-id", session.conversationId);
   }
@@ -926,56 +863,16 @@ function extractErrorMessage(rawJson: string): string | null {
   return typeof direct === "string" && direct.trim() ? direct.trim() : null;
 }
 
-async function ensureValidTokenWithAutoFetch(
-  tokenState: TokenState | null,
-  tokenPath: string,
-  providedToken: string | null,
-  reason: string,
-): Promise<{ token: string; expiresAtUtc: Date }> {
-  if (providedToken?.trim()) {
-    return ensureValidToken(tokenState, tokenPath, providedToken);
+function normalizeAuthorizationHeaderValue(token: string | null): string | null {
+  if (!token?.trim()) {
+    return null;
   }
-  if (isTokenStateValid(tokenState)) {
-    return {
-      token: tokenState.token,
-      expiresAtUtc: new Date(tokenState.expiresAtUtc),
-    };
+  const trimmed = token.trim();
+  if (trimmed.toLowerCase().startsWith("bearer ")) {
+    const bearerValue = trimmed.slice("Bearer ".length).trim();
+    return bearerValue ? `Bearer ${bearerValue}` : null;
   }
-
-  const storageStatePath = await getBrowserStatePath();
-  console.log(
-    `[token] No valid token available (${reason}). Trying automatic token fetch...`,
-  );
-  console.log(`[token] Browser state path: ${storageStatePath}`);
-
-  try {
-    await fetchTokenWithPlaywright(tokenPath, storageStatePath, {
-      quiet: true,
-    });
-    const fetchedTokenState = await loadToken(tokenPath);
-    if (isTokenStateValid(fetchedTokenState)) {
-      console.log("[token] Automatic token fetch succeeded.");
-      return {
-        token: fetchedTokenState.token,
-        expiresAtUtc: new Date(fetchedTokenState.expiresAtUtc),
-      };
-    }
-    console.log(
-      "[token] Automatic token fetch completed but token is still missing/expired.",
-    );
-  } catch (error) {
-    console.log(`[token] Automatic token fetch failed: ${formatError(error)}`);
-  }
-
-  return ensureValidToken(await loadToken(tokenPath), tokenPath, null);
-}
-
-function isTokenStateValid(tokenState: TokenState | null): tokenState is TokenState {
-  if (!tokenState?.token?.trim()) {
-    return false;
-  }
-  const expiresAtUtc = new Date(tokenState.expiresAtUtc);
-  return expiresAtUtc.getTime() > Date.now() + 60_000;
+  return `Bearer ${trimmed}`;
 }
 
 function formatError(error: unknown): string {

@@ -7,7 +7,7 @@
     "start:proxy": "bun src/proxy/index.ts",
     "dev:proxy": "bun --watch src/proxy/index.ts",
     "cli": "bun src/cli/index.ts",
-    "build:proxy": "bun build src/proxy/index.ts --compile --outfile dist/m365-copilot-bun-proxy && bun -e \"require('node:fs').copyFileSync('config.json','dist/config.json');\"",
+    "build:proxy": "bun build src/proxy/index.ts --compile --outfile dist/m365-copilot-bun-proxy && bun -e \"const fs=require('node:fs');fs.copyFileSync('config.json','dist/config.json');fs.copyFileSync('src/cli/playwright-token.node.mjs','dist/playwright-token.node.mjs');\"",
     "build:cli": "bun build src/cli/index.ts --compile --outfile dist/m365-copilot-bun-cli && bun -e \"const fs=require('node:fs');fs.copyFileSync('config.json','dist/config.json');fs.copyFileSync('src/cli/playwright-token.node.mjs','dist/playwright-token.node.mjs');\"",
     "typecheck": "tsc --noEmit"
   },

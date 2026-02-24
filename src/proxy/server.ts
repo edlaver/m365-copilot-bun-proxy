@@ -51,9 +51,9 @@ import {
   type ParsedResponsesRequest,
   type WrapperOptions,
 } from "./types";
+import { ProxyTokenProvider } from "./token-provider";
 import {
   extractGraphErrorMessage,
-  normalizeBearerToken,
   nowUnix,
   readSseEvents,
   tryReadJsonPayload,
@@ -66,6 +66,7 @@ type Services = {
   substrateClient: CopilotSubstrateClient;
   conversationStore: ConversationStore;
   responseStore: ResponseStore;
+  tokenProvider: ProxyTokenProvider;
 };
 
 export function createProxyApp(services: Services): Hono {
@@ -127,14 +128,12 @@ async function handleChat(
     conversationStore,
     debugLogger,
   } = services;
-  const authorizationHeader = normalizeBearerToken(
-    request.headers.get("authorization"),
-  );
+  const authorizationHeader = await resolveAuthorizationHeader(request, services);
   if (!authorizationHeader) {
     return writeOpenAiError(
       services,
       401,
-      "Missing Authorization Bearer token.",
+      "Authorization header is missing/empty and automatic token acquisition failed.",
       "invalid_request_error",
       "missing_authorization",
     );
@@ -409,14 +408,12 @@ async function handleResponsesCreate(
     responseStore,
     debugLogger,
   } = services;
-  const authorizationHeader = normalizeBearerToken(
-    request.headers.get("authorization"),
-  );
+  const authorizationHeader = await resolveAuthorizationHeader(request, services);
   if (!authorizationHeader) {
     return writeOpenAiError(
       services,
       401,
-      "Missing Authorization Bearer token.",
+      "Authorization header is missing/empty and automatic token acquisition failed.",
       "invalid_request_error",
       "missing_authorization",
     );
@@ -694,15 +691,13 @@ async function handleResponsesList(
   request: Request,
   services: Services,
 ): Promise<Response> {
-  const authorizationHeader = normalizeBearerToken(
-    request.headers.get("authorization"),
-  );
+  const authorizationHeader = await resolveAuthorizationHeader(request, services);
   await services.debugLogger.logIncomingRequest(request, null);
   if (!authorizationHeader) {
     return writeOpenAiError(
       services,
       401,
-      "Missing Authorization Bearer token.",
+      "Authorization header is missing/empty and automatic token acquisition failed.",
       "invalid_request_error",
       "missing_authorization",
     );
@@ -728,15 +723,13 @@ async function handleResponsesRetrieve(
   services: Services,
   responseIdParam: string,
 ): Promise<Response> {
-  const authorizationHeader = normalizeBearerToken(
-    request.headers.get("authorization"),
-  );
+  const authorizationHeader = await resolveAuthorizationHeader(request, services);
   await services.debugLogger.logIncomingRequest(request, null);
   if (!authorizationHeader) {
     return writeOpenAiError(
       services,
       401,
-      "Missing Authorization Bearer token.",
+      "Authorization header is missing/empty and automatic token acquisition failed.",
       "invalid_request_error",
       "missing_authorization",
     );
@@ -775,15 +768,13 @@ async function handleResponsesDelete(
   services: Services,
   responseIdParam: string,
 ): Promise<Response> {
-  const authorizationHeader = normalizeBearerToken(
-    request.headers.get("authorization"),
-  );
+  const authorizationHeader = await resolveAuthorizationHeader(request, services);
   await services.debugLogger.logIncomingRequest(request, null);
   if (!authorizationHeader) {
     return writeOpenAiError(
       services,
       401,
-      "Missing Authorization Bearer token.",
+      "Authorization header is missing/empty and automatic token acquisition failed.",
       "invalid_request_error",
       "missing_authorization",
     );
@@ -1225,6 +1216,15 @@ async function streamSubstrateAsResponses(
   headers.set("x-m365-conversation-id", initialConversationId);
   await services.debugLogger.logOutgoingResponse(200, headers.entries(), null);
   return new Response(stream, { status: 200, headers });
+}
+
+async function resolveAuthorizationHeader(
+  request: Request,
+  services: Services,
+): Promise<string | null> {
+  return services.tokenProvider.resolveAuthorizationHeader(
+    request.headers.get("authorization"),
+  );
 }
 
 function clampListLimit(raw: string | null): number {
