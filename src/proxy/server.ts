@@ -44,6 +44,7 @@ import {
   tryParseResponsesRequest,
 } from "./request-parser";
 import {
+  ToolChoiceModes,
   TransportNames,
   type JsonObject,
   type ChatResult,
@@ -321,10 +322,47 @@ async function handleChat(
           parsedRequest.promptText,
         ) ??
         "";
-      const assistantResponse = buildAssistantResponse(
+      let assistantResponse = buildAssistantResponse(
         parsedRequest,
         assistantText,
       );
+      if (
+        shouldRetryStrictToolOutput(
+          selectedTransport,
+          parsedRequest,
+          assistantResponse,
+        )
+      ) {
+        const retryResult = await executeChatTurnWithRecovery();
+        if (!retryResult.isSuccess) {
+          return writeFromUpstreamFailure(
+            services,
+            retryResult.statusCode,
+            retryResult.rawBody,
+            selectedTransport === TransportNames.Substrate
+              ? "Substrate chat request failed."
+              : "Microsoft Graph chat request failed.",
+            selectedTransport === TransportNames.Substrate
+              ? "substrate_error"
+              : "graph_error",
+          );
+        }
+        if (retryResult.conversationId) {
+          conversationId = retryResult.conversationId;
+          responseHeaders.set("x-m365-conversation-id", conversationId);
+          if (scopedConversationKey) {
+            conversationStore.set(scopedConversationKey, conversationId);
+          }
+        }
+        const retryAssistantText =
+          retryResult.assistantText ??
+          extractCopilotAssistantText(
+            retryResult.responseJson,
+            parsedRequest.promptText,
+          ) ??
+          "";
+        assistantResponse = buildAssistantResponse(parsedRequest, retryAssistantText);
+      }
       const strictToolError = await tryWriteStrictToolOutputError(
         services,
         assistantResponse,
@@ -409,10 +447,47 @@ async function handleChat(
       parsedRequest.promptText,
     ) ??
     "";
-  const assistantResponse = buildAssistantResponse(
+  let assistantResponse = buildAssistantResponse(
     parsedRequest,
     assistantText,
   );
+  if (
+    shouldRetryStrictToolOutput(
+      selectedTransport,
+      parsedRequest,
+      assistantResponse,
+    )
+  ) {
+    const retryResult = await executeChatTurnWithRecovery();
+    if (!retryResult.isSuccess) {
+      return writeFromUpstreamFailure(
+        services,
+        retryResult.statusCode,
+        retryResult.rawBody,
+        selectedTransport === TransportNames.Substrate
+          ? "Substrate chat request failed."
+          : "Microsoft Graph chat request failed.",
+        selectedTransport === TransportNames.Substrate
+          ? "substrate_error"
+          : "graph_error",
+      );
+    }
+    if (retryResult.conversationId) {
+      conversationId = retryResult.conversationId;
+      responseHeaders.set("x-m365-conversation-id", conversationId);
+      if (scopedConversationKey) {
+        conversationStore.set(scopedConversationKey, conversationId);
+      }
+    }
+    const retryAssistantText =
+      retryResult.assistantText ??
+      extractCopilotAssistantText(
+        retryResult.responseJson,
+        parsedRequest.promptText,
+      ) ??
+      "";
+    assistantResponse = buildAssistantResponse(parsedRequest, retryAssistantText);
+  }
   const strictToolError = await tryWriteStrictToolOutputError(
     services,
     assistantResponse,
@@ -654,7 +729,44 @@ async function handleResponsesCreate(
           baseRequest.promptText,
         ) ??
         "";
-      const assistantResponse = buildAssistantResponse(baseRequest, assistantText);
+      let assistantResponse = buildAssistantResponse(baseRequest, assistantText);
+      if (
+        shouldRetryStrictToolOutput(
+          selectedTransport,
+          baseRequest,
+          assistantResponse,
+        )
+      ) {
+        const retryResult = await executeChatTurnWithRecovery();
+        if (!retryResult.isSuccess) {
+          return writeFromUpstreamFailure(
+            services,
+            retryResult.statusCode,
+            retryResult.rawBody,
+            selectedTransport === TransportNames.Substrate
+              ? "Substrate chat request failed."
+              : "Microsoft Graph chat request failed.",
+            selectedTransport === TransportNames.Substrate
+              ? "substrate_error"
+              : "graph_error",
+          );
+        }
+        if (retryResult.conversationId) {
+          conversationId = retryResult.conversationId;
+          responseHeaders.set("x-m365-conversation-id", conversationId);
+          if (scopedConversationKey) {
+            conversationStore.set(scopedConversationKey, conversationId);
+          }
+        }
+        const retryAssistantText =
+          retryResult.assistantText ??
+          extractCopilotAssistantText(
+            retryResult.responseJson,
+            baseRequest.promptText,
+          ) ??
+          "";
+        assistantResponse = buildAssistantResponse(baseRequest, retryAssistantText);
+      }
       const strictToolError = await tryWriteStrictToolOutputError(
         services,
         assistantResponse,
@@ -734,7 +846,44 @@ async function handleResponsesCreate(
     chatResponse.assistantText ??
     extractCopilotAssistantText(chatResponse.responseJson, baseRequest.promptText) ??
     "";
-  const assistantResponse = buildAssistantResponse(baseRequest, assistantText);
+  let assistantResponse = buildAssistantResponse(baseRequest, assistantText);
+  if (
+    shouldRetryStrictToolOutput(
+      selectedTransport,
+      baseRequest,
+      assistantResponse,
+    )
+  ) {
+    const retryResult = await executeChatTurnWithRecovery();
+    if (!retryResult.isSuccess) {
+      return writeFromUpstreamFailure(
+        services,
+        retryResult.statusCode,
+        retryResult.rawBody,
+        selectedTransport === TransportNames.Substrate
+          ? "Substrate chat request failed."
+          : "Microsoft Graph chat request failed.",
+        selectedTransport === TransportNames.Substrate
+          ? "substrate_error"
+          : "graph_error",
+      );
+    }
+    if (retryResult.conversationId) {
+      conversationId = retryResult.conversationId;
+      responseHeaders.set("x-m365-conversation-id", conversationId);
+      if (scopedConversationKey) {
+        conversationStore.set(scopedConversationKey, conversationId);
+      }
+    }
+    const retryAssistantText =
+      retryResult.assistantText ??
+      extractCopilotAssistantText(
+        retryResult.responseJson,
+        baseRequest.promptText,
+      ) ??
+      "";
+    assistantResponse = buildAssistantResponse(baseRequest, retryAssistantText);
+  }
   const strictToolError = await tryWriteStrictToolOutputError(
     services,
     assistantResponse,
@@ -1337,6 +1486,23 @@ function shouldRetrySubstrateNoAssistantContent(
   return message
     .toLowerCase()
     .includes("substrate chat returned no assistant content");
+}
+
+function shouldRetryStrictToolOutput(
+  transport: string,
+  request: ParsedOpenAiRequest,
+  assistantResponse: OpenAiAssistantResponse,
+): boolean {
+  if (transport !== TransportNames.Substrate) {
+    return false;
+  }
+  if (!assistantResponse.strictToolErrorMessage) {
+    return false;
+  }
+  return (
+    request.tooling.toolChoiceMode === ToolChoiceModes.Required ||
+    request.tooling.toolChoiceMode === ToolChoiceModes.Function
+  );
 }
 
 function clampListLimit(raw: string | null): number {
