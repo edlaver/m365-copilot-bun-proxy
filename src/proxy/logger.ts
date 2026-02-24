@@ -1,15 +1,26 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { WrapperOptions } from "./types";
+import type { LogLevel, WrapperOptions } from "./types";
 import { tryPrettyJson } from "./utils";
+
+const LogLevelPriority: Record<LogLevel, number> = {
+  error: 0,
+  warning: 1,
+  info: 2,
+  debug: 3,
+  trace: 4,
+};
 
 export class DebugMarkdownLogger {
   private sequence = 0;
+  private readonly logLevel: LogLevel;
 
   constructor(
     private readonly options: WrapperOptions,
     private readonly isEnabled: boolean,
-  ) {}
+  ) {
+    this.logLevel = normalizeLogLevel(options.logLevel);
+  }
 
   async logIncomingRequest(
     request: Request,
@@ -38,6 +49,7 @@ export class DebugMarkdownLogger {
       [...headers],
       rawBody,
       "outgoing-response",
+      statusCode,
     );
   }
 
@@ -102,11 +114,13 @@ export class DebugMarkdownLogger {
     headers: readonly [string, string][],
     body: string | null,
     suffix: string,
+    statusCode: number | null = null,
   ): Promise<void> {
     if (
       !this.isEnabled ||
       !this.options.debugPath ||
-      !this.options.debugPath.trim()
+      !this.options.debugPath.trim() ||
+      !this.shouldLogByLevel(suffix, statusCode)
     ) {
       return;
     }
@@ -134,6 +148,49 @@ export class DebugMarkdownLogger {
     }
     await fs.writeFile(filePath, lines.join("\n"), "utf8");
   }
+
+  private shouldLogByLevel(suffix: string, statusCode: number | null): boolean {
+    if (suffix === "substrate-delta") {
+      return this.logLevel === "trace";
+    }
+
+    if (suffix === "substrate-response") {
+      return this.isLevelEnabled("debug");
+    }
+
+    if (suffix === "outgoing-response") {
+      if (this.logLevel === "warning") {
+        return statusCode !== null && statusCode >= 400 && statusCode <= 499;
+      }
+      if (this.logLevel === "error") {
+        return statusCode !== null && statusCode >= 500 && statusCode <= 599;
+      }
+      return true;
+    }
+
+    return this.isLevelEnabled("debug");
+  }
+
+  private isLevelEnabled(level: LogLevel): boolean {
+    return LogLevelPriority[this.logLevel] >= LogLevelPriority[level];
+  }
+}
+
+function normalizeLogLevel(raw: string | null | undefined): LogLevel {
+  if (!raw) {
+    return "info";
+  }
+  const normalized = raw.trim().toLowerCase();
+  if (
+    normalized === "trace" ||
+    normalized === "debug" ||
+    normalized === "info" ||
+    normalized === "warning" ||
+    normalized === "error"
+  ) {
+    return normalized;
+  }
+  return "info";
 }
 
 function redactHeaderValue(header: string, value: string): string {

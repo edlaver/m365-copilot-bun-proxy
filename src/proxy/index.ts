@@ -44,8 +44,8 @@ console.log(
 );
 console.log(
   debugEnabled
-    ? `Debugging: enabled (logs at ${debugLogPath})`
-    : "Debugging: disabled",
+    ? `Debugging: enabled (level: ${options.logLevel}, logs at ${debugLogPath})`
+    : `Debugging: disabled (configured level: ${options.logLevel})`,
 );
 
 function parseDebugFlag(): boolean {

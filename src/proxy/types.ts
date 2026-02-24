@@ -10,6 +10,16 @@ export const TransportNames = {
   Substrate: "substrate",
 } as const;
 
+export const LogLevels = {
+  Trace: "trace",
+  Debug: "debug",
+  Info: "info",
+  Warning: "warning",
+  Error: "error",
+} as const;
+
+export type LogLevel = (typeof LogLevels)[keyof typeof LogLevels];
+
 export const ToolChoiceModes = {
   Auto: "auto",
   None: "none",
@@ -141,6 +151,7 @@ export type SubstrateOptions = {
 export type WrapperOptions = {
   listenUrl: string;
   debugPath: string | null;
+  logLevel: LogLevel;
   transport: string;
   graphBaseUrl: string;
   createConversationPath: string;

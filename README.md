@@ -33,6 +33,14 @@ You can also pass an explicit value:
 bun run start:proxy -- --debug=false
 ```
 
+Logging level is configured with `logLevel` in `config.json` (default `info`):
+
+- `trace`: all logs, including `-delta`
+- `debug`: excludes `-delta`, includes intermediate `substrate-response`
+- `info`: only `-outgoing-response`
+- `warning`: only `-outgoing-response` with HTTP 4xx status
+- `error`: only `-outgoing-response` with HTTP 5xx status
+
 Default listen URL is `http://localhost:4000`.
 
 Configuration is loaded from `config.json` (and `config.{env}.json` when `NODE_ENV` is set).

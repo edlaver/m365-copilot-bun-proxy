@@ -1,12 +1,24 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import type { JsonObject, WrapperOptions } from "./types";
+import { LogLevels, type JsonObject, type WrapperOptions } from "./types";
 import { deepMerge, isJsonObject, parseEnvValue, setDeepValue } from "./utils";
+
+const LogLevelSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  z.enum([
+    LogLevels.Trace,
+    LogLevels.Debug,
+    LogLevels.Info,
+    LogLevels.Warning,
+    LogLevels.Error,
+  ]),
+);
 
 const WrapperOptionsSchema = z.object({
   listenUrl: z.string().default("http://localhost:4000"),
   debugPath: z.string().nullable().default("./Logs"),
+  logLevel: LogLevelSchema.default(LogLevels.Info),
   transport: z.string().default("graph"),
   graphBaseUrl: z.string().default("https://graph.microsoft.com"),
   createConversationPath: z.string().default("/beta/copilot/conversations"),
