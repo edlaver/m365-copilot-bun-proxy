@@ -35,11 +35,13 @@ bun run start:proxy -- --debug=false
 
 Logging level is configured with `logLevel` in `config.json` (default `info`):
 
-- `trace`: all logs, including `-delta`
-- `debug`: excludes `-delta`, includes intermediate `substrate-response`
-- `info`: only `-outgoing-response`
-- `warning`: only `-outgoing-response` with HTTP 4xx status
-- `error`: only `-outgoing-response` with HTTP 5xx status
+- Request logs (`incoming-request`, `request`, `substrate-request`) are always written when debug logging is enabled.
+- Response log filtering by level:
+- `trace`: includes `substrate-delta`
+- `debug`: includes `substrate-response`, `response`, `response-headers`, and `outgoing-response`
+- `info`: includes `outgoing-response`
+- `warning`: includes `outgoing-response` only for HTTP 4xx status
+- `error`: includes `outgoing-response` only for HTTP 5xx status
 
 Default listen URL is `http://localhost:4000`.
 

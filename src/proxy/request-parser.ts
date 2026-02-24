@@ -899,7 +899,7 @@ function appendOpenAiCompatibilityContext(
 ): void {
   if (tooling.tools.length > 0) {
     context.push({
-      text: 'If you call a tool, respond ONLY as minified JSON with this exact shape: {"tool_calls":[{"name":"<tool-name>","arguments":{...}}]}. No markdown, no prose, no extra keys.',
+      text: 'If you call a tool, respond ONLY as minified JSON with this exact shape: {"tool_calls":[{"name":"<tool-name>","arguments":{}}]}. No markdown, no prose, no extra keys.',
       description: "OpenAI tool-calling contract",
     });
     context.push({
@@ -1006,7 +1006,17 @@ function* enumerateJsonCandidates(rawText: string): Iterable<string> {
   if (!trimmed) {
     return;
   }
-  yield trimmed;
+  const seen = new Set<string>();
+  const yieldCandidate = function* (candidate: string): Iterable<string> {
+    const normalized = candidate.trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    yield normalized;
+  };
+
+  yield* yieldCandidate(trimmed);
 
   let cursor = 0;
   while (cursor < rawText.length) {
@@ -1024,26 +1034,41 @@ function* enumerateJsonCandidates(rawText: string): Iterable<string> {
     }
     const body = rawText.slice(bodyStart + 1, fenceEnd).trim();
     if (body) {
-      yield body;
+      yield* yieldCandidate(body);
     }
     cursor = fenceEnd + 3;
   }
 
-  const balanced = extractFirstBalancedJsonSegment(rawText);
-  if (balanced && balanced !== trimmed) {
+  for (const balanced of extractBalancedJsonSegments(rawText)) {
+    yield* yieldCandidate(balanced);
+  }
+}
+
+function* extractBalancedJsonSegments(rawText: string): Iterable<string> {
+  const maxCandidates = 128;
+  let emitted = 0;
+  for (let start = 0; start < rawText.length; start++) {
+    if (emitted >= maxCandidates) {
+      break;
+    }
+    const opening = rawText[start];
+    if (opening !== "{" && opening !== "[") {
+      continue;
+    }
+    const balanced = extractBalancedJsonSegment(rawText, start, opening);
+    if (!balanced) {
+      continue;
+    }
+    emitted++;
     yield balanced;
   }
 }
 
-function extractFirstBalancedJsonSegment(rawText: string): string | null {
-  const start = rawText.search(/[\{\[]/);
-  if (start < 0) {
-    return null;
-  }
-  const opening = rawText[start];
-  if (opening !== "{" && opening !== "[") {
-    return null;
-  }
+function extractBalancedJsonSegment(
+  rawText: string,
+  start: number,
+  opening: string,
+): string | null {
   const closing = opening === "{" ? "}" : "]";
   let depth = 0;
   let inString = false;

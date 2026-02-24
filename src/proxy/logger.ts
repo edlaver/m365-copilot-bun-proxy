@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { LogLevel, WrapperOptions } from "./types";
-import { tryPrettyJson } from "./utils";
+import { tryParseJsonObject, tryPrettyJson } from "./utils";
 
 const LogLevelPriority: Record<LogLevel, number> = {
   error: 0,
@@ -96,6 +96,13 @@ export class DebugMarkdownLogger {
     payload: string,
   ): Promise<void> {
     const normalizedDirection = direction.trim().toLowerCase() || "frame";
+    if (
+      normalizedDirection === "request" &&
+      this.logLevel === "info" &&
+      isTrivialSubstrateRequestPayload(payload)
+    ) {
+      return;
+    }
     await this.logHttpLike(
       `Substrate WebSocket ${normalizedDirection}`,
       [
@@ -150,6 +157,10 @@ export class DebugMarkdownLogger {
   }
 
   private shouldLogByLevel(suffix: string, statusCode: number | null): boolean {
+    if (isRequestSuffix(suffix)) {
+      return true;
+    }
+
     if (suffix === "substrate-delta") {
       return this.logLevel === "trace";
     }
@@ -168,7 +179,11 @@ export class DebugMarkdownLogger {
       return true;
     }
 
-    return this.isLevelEnabled("debug");
+    if (suffix === "response" || suffix === "response-headers") {
+      return this.isLevelEnabled("debug");
+    }
+
+    return true;
   }
 
   private isLevelEnabled(level: LogLevel): boolean {
@@ -191,6 +206,14 @@ function normalizeLogLevel(raw: string | null | undefined): LogLevel {
     return normalized;
   }
   return "info";
+}
+
+function isRequestSuffix(suffix: string): boolean {
+  return (
+    suffix === "incoming-request" ||
+    suffix === "request" ||
+    suffix === "substrate-request"
+  );
 }
 
 function redactHeaderValue(header: string, value: string): string {
@@ -252,4 +275,29 @@ function redactTokenValue(token: string): string {
     return `${prefix}...`;
   }
   return `${prefix}...${suffix}`;
+}
+
+function isTrivialSubstrateRequestPayload(payload: string): boolean {
+  const frames = payload
+    .split("\u001e")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (frames.length === 0) {
+    return false;
+  }
+  return frames.every((frame) => isTrivialSubstrateRequestFrame(frame));
+}
+
+function isTrivialSubstrateRequestFrame(frame: string): boolean {
+  const json = tryParseJsonObject(frame);
+  if (!json) {
+    return false;
+  }
+
+  const keys = Object.keys(json);
+  if (keys.length === 2 && keys.includes("protocol") && keys.includes("version")) {
+    return json.protocol === "json" && json.version === 1;
+  }
+
+  return keys.length === 1 && keys[0] === "type" && json.type === 6;
 }
