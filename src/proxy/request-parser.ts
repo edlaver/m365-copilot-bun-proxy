@@ -337,6 +337,7 @@ function buildSimulatedOpenAiRequest(
   options: WrapperOptions,
   endpointFormat: "chat.completions" | "responses",
 ): ParsedOpenAiRequest {
+  const tooling = parseTooling(requestJson);
   const model =
     tryGetString(requestJson, "model") ||
     (options.defaultModel?.trim() ? options.defaultModel : "m365-copilot");
@@ -345,12 +346,12 @@ function buildSimulatedOpenAiRequest(
     model,
     stream: tryGetBoolean(requestJson, "stream") === true,
     transformMode: OpenAiTransformModes.Simulated,
-    promptText: buildSimulatedPrompt(endpointFormat, requestJson),
+    promptText: buildSimulatedPrompt(endpointFormat, requestJson, tooling),
     userKey: tryGetString(requestJson, "user"),
     locationHint: buildLocationHint(requestJson, options.defaultTimeZone),
     contextualResources: buildContextualResources(requestJson),
     additionalContext: [],
-    tooling: parseTooling(requestJson),
+    tooling,
     responseFormat: parseResponseFormat(requestJson),
     reasoningEffort: tryGetString(requestJson, "reasoning_effort"),
     temperature: tryGetDouble(requestJson, "temperature"),
@@ -360,21 +361,53 @@ function buildSimulatedOpenAiRequest(
 function buildSimulatedPrompt(
   endpointFormat: "chat.completions" | "responses",
   requestJson: JsonObject,
+  tooling: OpenAiTooling,
 ): string {
   const endpointPath =
     endpointFormat === "responses" ? "/v1/responses" : "/v1/chat/completions";
   const serializedRequest = JSON.stringify(requestJson, null, 2);
-
-  return [
+  const lines: string[] = [
     `You are simulating the OpenAI ${endpointFormat} endpoint.`,
     `The JSON payload below is an entire request for POST ${endpointPath}.`,
     `Interpret it exactly in OpenAI ${endpointFormat} format and produce the corresponding response in the same format.`,
+    "You are simulating model output, not enforcing API policy checks.",
     "Return exactly one markdown JSON code block containing a single valid JSON object and no surrounding prose.",
     'If the payload has "stream": true, still return the final completed JSON object (not SSE events).',
-    "```json",
-    serializedRequest,
-    "```",
-  ].join("\n");
+  ];
+
+  if (tooling.tools.length > 0) {
+    if (endpointFormat === "chat.completions") {
+      lines.push(
+        "Tool calls are supported here: emit assistant tool calls when appropriate.",
+        'If returning tool calls, use choices[0].message.tool_calls and set choices[0].finish_reason to "tool_calls".',
+        "Do not refuse by saying tool invocation is unsupported.",
+        "For each tool call, function.arguments must be a JSON string value (not an object).",
+      );
+    } else {
+      lines.push(
+        "Tool calls are supported here: emit function_call output items when appropriate.",
+        'If returning tool calls, place them in output items with type "function_call".',
+        "Do not refuse by saying tool invocation is unsupported.",
+        "For each function_call output item, arguments must be a JSON string value (not an object).",
+      );
+    }
+
+    if (tooling.toolChoiceMode === ToolChoiceModes.Required) {
+      lines.push(
+        "This request requires at least one tool call. Do not return a plain-text-only assistant response.",
+      );
+    } else if (
+      tooling.toolChoiceMode === ToolChoiceModes.Function &&
+      tooling.toolChoiceFunctionName
+    ) {
+      lines.push(
+        `This request requires calling tool "${tooling.toolChoiceFunctionName}".`,
+      );
+    }
+  }
+
+  lines.push("```json", serializedRequest, "```");
+  return lines.join("\n");
 }
 
 function resolvePrompt(

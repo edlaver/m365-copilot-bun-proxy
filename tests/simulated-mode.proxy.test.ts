@@ -345,6 +345,94 @@ describe("simulated transform mode proxy flow", () => {
     expect(String(functionNode.arguments)).toContain("\"path\"");
     expect(String(functionNode.arguments)).toContain("\"content\"");
   });
+
+  test("chat/completions simulated prompt includes explicit tool-call guidance", async () => {
+    const simulatedCompletion: JsonObject = {
+      id: "chatcmpl_prompt_guidance",
+      object: "chat.completion",
+      model: "simulated-model",
+      created: 1700000000,
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: {
+                  name: "write_to_file",
+                  arguments: "{\"path\":\"tests/agent-tests/fizz-buzz.ts\",\"content\":\"x\"}",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    let capturedPrompt = "";
+    const app = createProxyApp(
+      createServices((conversationId, payload) => {
+        capturedPrompt = readPrompt(payload);
+        return buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson(simulatedCompletion),
+        );
+      }),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: false,
+          messages: [{ role: "user", content: "Implement fizz buzz." }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "write_to_file",
+                description: "Write content",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    path: { type: "string" },
+                    content: { type: "string" },
+                  },
+                  required: ["path", "content"],
+                },
+              },
+            },
+          ],
+          tool_choice: "required",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(capturedPrompt).toContain(
+      "Tool calls are supported here: emit assistant tool calls when appropriate.",
+    );
+    expect(capturedPrompt).toContain(
+      "Do not refuse by saying tool invocation is unsupported.",
+    );
+    expect(capturedPrompt).toContain(
+      "function.arguments must be a JSON string value",
+    );
+    expect(capturedPrompt).toContain(
+      "This request requires at least one tool call.",
+    );
+  });
 });
 
 function createServices(
