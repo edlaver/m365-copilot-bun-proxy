@@ -13,7 +13,7 @@ import { parseListenUrl } from "./utils";
 
 const loadedOptions = await loadWrapperOptions(process.cwd());
 const debugEnabled = parseDebugFlag();
-const options = await withSessionDebugPath(loadedOptions, debugEnabled);
+const options = withSessionDebugPath(loadedOptions, debugEnabled);
 if (debugEnabled && options.debugPath?.trim()) {
   await fs.mkdir(options.debugPath, { recursive: true });
 }
@@ -72,70 +72,19 @@ function parseDebugFlag(): boolean {
   return values.debug ?? false;
 }
 
-async function withSessionDebugPath(
+function withSessionDebugPath(
   options: WrapperOptions,
   debugEnabled: boolean,
-): Promise<WrapperOptions> {
+): WrapperOptions {
   if (!debugEnabled || !options.debugPath?.trim()) {
     return options;
   }
 
   const basePath = options.debugPath.trim();
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const sessionFolder = await resolveSessionFolderName(basePath, timestamp);
 
   return {
     ...options,
-    debugPath: path.join(basePath, sessionFolder),
+    debugPath: path.join(basePath, timestamp),
   };
-}
-
-async function resolveSessionFolderName(
-  basePath: string,
-  timestamp: string,
-): Promise<string> {
-  const nextSequence = (await findMaxSessionPrefix(basePath)) + 1;
-  for (let sequence = nextSequence; sequence < 1_000_000; sequence++) {
-    const prefix = String(sequence).padStart(3, "0");
-    const candidate = `${prefix}-${timestamp}`;
-    if (!(await pathExists(path.join(basePath, candidate)))) {
-      return candidate;
-    }
-  }
-
-  throw new Error(
-    `Unable to allocate a unique debug session folder under ${basePath}`,
-  );
-}
-
-async function findMaxSessionPrefix(basePath: string): Promise<number> {
-  try {
-    const entries = await fs.readdir(basePath, { withFileTypes: true });
-    let max = 0;
-    for (const entry of entries) {
-      if (!entry.isDirectory()) {
-        continue;
-      }
-      const match = /^(\d+)-/.exec(entry.name);
-      if (!match) {
-        continue;
-      }
-      const value = Number.parseInt(match[1], 10);
-      if (Number.isFinite(value) && value > max) {
-        max = value;
-      }
-    }
-    return max;
-  } catch {
-    return 0;
-  }
-}
-
-async function pathExists(targetPath: string): Promise<boolean> {
-  try {
-    await fs.access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
 }
