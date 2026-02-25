@@ -103,6 +103,7 @@ const WrapperOptionsSchema = z.object({
       entityAnnotationTypes: z
         .array(z.string())
         .default(["People", "File", "Event", "Email", "TeamsMessage"]),
+      earlyCompleteOnSimulatedPayload: z.boolean().default(false),
     })
     .default({}),
   defaultModel: z.string().default("m365-copilot"),
@@ -110,6 +111,7 @@ const WrapperOptionsSchema = z.object({
   conversationTtlMinutes: z.number().int().default(180),
   maxAdditionalContextMessages: z.number().int().default(16),
   includeConversationIdInResponseBody: z.boolean().default(true),
+  retrySimulatedToollessResponses: z.boolean().default(true),
 });
 
 export async function loadWrapperOptions(cwd: string): Promise<WrapperOptions> {

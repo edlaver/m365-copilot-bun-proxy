@@ -343,7 +343,12 @@ async function handleChat(
 
         if (
           !normalizedSimulatedPayload ||
-          !hasUsableSimulatedChatCompletionPayload(normalizedSimulatedPayload)
+          !hasUsableSimulatedChatCompletionPayload(normalizedSimulatedPayload) ||
+          shouldRetrySimulatedToollessChatPayload(
+            options,
+            parsedRequest,
+            normalizedSimulatedPayload,
+          )
         ) {
           const retryResult = await executeChatTurnWithRecovery();
           if (!retryResult.isSuccess) {
@@ -389,7 +394,12 @@ async function handleChat(
 
         if (
           !normalizedSimulatedPayload ||
-          !hasUsableSimulatedChatCompletionPayload(normalizedSimulatedPayload)
+          !hasUsableSimulatedChatCompletionPayload(normalizedSimulatedPayload) ||
+          shouldRetrySimulatedToollessChatPayload(
+            options,
+            parsedRequest,
+            normalizedSimulatedPayload,
+          )
         ) {
           return writeOpenAiError(
             services,
@@ -548,7 +558,11 @@ async function handleChat(
         )
       : null;
 
-    if (!normalized || !hasUsableSimulatedChatCompletionPayload(normalized)) {
+    if (
+      !normalized ||
+      !hasUsableSimulatedChatCompletionPayload(normalized) ||
+      shouldRetrySimulatedToollessChatPayload(options, parsedRequest, normalized)
+    ) {
       const retryResult = await executeChatTurnWithRecovery();
       if (!retryResult.isSuccess) {
         return writeFromUpstreamFailure(
@@ -591,7 +605,11 @@ async function handleChat(
         : null;
     }
 
-    if (!normalized || !hasUsableSimulatedChatCompletionPayload(normalized)) {
+    if (
+      !normalized ||
+      !hasUsableSimulatedChatCompletionPayload(normalized) ||
+      shouldRetrySimulatedToollessChatPayload(options, parsedRequest, normalized)
+    ) {
       return writeOpenAiError(
         services,
         502,
@@ -902,7 +920,15 @@ async function handleResponsesCreate(
             )
           : null;
 
-        if (!normalized || !hasUsableSimulatedResponsesPayload(normalized.responseBody)) {
+        if (
+          !normalized ||
+          !hasUsableSimulatedResponsesPayload(normalized.responseBody) ||
+          shouldRetrySimulatedToollessResponsesPayload(
+            options,
+            baseRequest,
+            normalized.responseBody,
+          )
+        ) {
           const retryResult = await executeChatTurnWithRecovery();
           if (!retryResult.isSuccess) {
             return writeFromUpstreamFailure(
@@ -945,7 +971,15 @@ async function handleResponsesCreate(
             : null;
         }
 
-        if (!normalized || !hasUsableSimulatedResponsesPayload(normalized.responseBody)) {
+        if (
+          !normalized ||
+          !hasUsableSimulatedResponsesPayload(normalized.responseBody) ||
+          shouldRetrySimulatedToollessResponsesPayload(
+            options,
+            baseRequest,
+            normalized.responseBody,
+          )
+        ) {
           return writeOpenAiError(
             services,
             502,
@@ -1094,7 +1128,15 @@ async function handleResponsesCreate(
         )
       : null;
 
-    if (!normalized || !hasUsableSimulatedResponsesPayload(normalized.responseBody)) {
+    if (
+      !normalized ||
+      !hasUsableSimulatedResponsesPayload(normalized.responseBody) ||
+      shouldRetrySimulatedToollessResponsesPayload(
+        options,
+        baseRequest,
+        normalized.responseBody,
+      )
+    ) {
       const retryResult = await executeChatTurnWithRecovery();
       if (!retryResult.isSuccess) {
         return writeFromUpstreamFailure(
@@ -1137,7 +1179,15 @@ async function handleResponsesCreate(
         : null;
     }
 
-    if (!normalized || !hasUsableSimulatedResponsesPayload(normalized.responseBody)) {
+    if (
+      !normalized ||
+      !hasUsableSimulatedResponsesPayload(normalized.responseBody) ||
+      shouldRetrySimulatedToollessResponsesPayload(
+        options,
+        baseRequest,
+        normalized.responseBody,
+      )
+    ) {
       return writeOpenAiError(
         services,
         502,
@@ -1503,6 +1553,39 @@ function hasUsableSimulatedChatCompletionPayload(payload: JsonObject): boolean {
   return Boolean(assistantResponse.content?.trim());
 }
 
+function shouldRetrySimulatedToollessChatPayload(
+  options: WrapperOptions,
+  request: ParsedOpenAiRequest,
+  payload: JsonObject | null,
+): boolean {
+  if (!payload || !options.retrySimulatedToollessResponses) {
+    return false;
+  }
+  if (request.tooling.tools.length === 0) {
+    return false;
+  }
+  if (request.tooling.toolChoiceMode === ToolChoiceModes.None) {
+    return false;
+  }
+
+  const assistantResponse =
+    tryBuildAssistantResponseFromChatCompletionPayload(payload);
+  if (!assistantResponse || assistantResponse.toolCalls.length > 0) {
+    return false;
+  }
+  if (!assistantResponse.content?.trim()) {
+    return false;
+  }
+
+  const choices = payload.choices;
+  const firstChoice =
+    Array.isArray(choices) && choices.length > 0 && isJsonObject(choices[0])
+      ? choices[0]
+      : null;
+  const finishReason = firstChoice ? tryGetString(firstChoice, "finish_reason") : null;
+  return !finishReason || finishReason.toLowerCase() === "stop";
+}
+
 function normalizeSimulatedChatChoices(payload: JsonObject): JsonObject[] {
   const explicitChoices = payload.choices;
   if (Array.isArray(explicitChoices) && explicitChoices.length > 0) {
@@ -1840,6 +1923,53 @@ function hasUsableSimulatedResponsesPayload(responseBody: JsonObject): boolean {
     }
   }
   return false;
+}
+
+function shouldRetrySimulatedToollessResponsesPayload(
+  options: WrapperOptions,
+  request: ParsedOpenAiRequest,
+  responseBody: JsonObject | null,
+): boolean {
+  if (!responseBody || !options.retrySimulatedToollessResponses) {
+    return false;
+  }
+  if (request.tooling.tools.length === 0) {
+    return false;
+  }
+  if (request.tooling.toolChoiceMode === ToolChoiceModes.None) {
+    return false;
+  }
+
+  const output = responseBody.output;
+  if (!Array.isArray(output)) {
+    return false;
+  }
+
+  let hasFunctionCall = false;
+  let hasMessageText = false;
+  for (const item of output) {
+    if (!isJsonObject(item)) {
+      continue;
+    }
+    const type = (tryGetString(item, "type") ?? "").toLowerCase();
+    if (type === "function_call") {
+      hasFunctionCall = true;
+      break;
+    }
+    if (type === "message" && extractMessageOutputText(item).trim()) {
+      hasMessageText = true;
+    }
+  }
+
+  if (hasFunctionCall) {
+    return false;
+  }
+  if (hasMessageText) {
+    return true;
+  }
+
+  const outputText = tryGetString(responseBody, "output_text");
+  return Boolean(outputText?.trim());
 }
 
 async function buildSimulatedChatStreamResponse(

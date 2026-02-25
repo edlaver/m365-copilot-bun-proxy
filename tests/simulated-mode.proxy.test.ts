@@ -579,6 +579,104 @@ describe("simulated transform mode proxy flow", () => {
     expect(Array.isArray(toolCalls)).toBeTrue();
     expect(toolCalls.length).toBe(1);
   });
+
+  test("chat/completions retries once when tool-capable request gets plain text stop payload", async () => {
+    const plainTextStopPayload: JsonObject = {
+      id: "chatcmpl-plain-stop",
+      object: "chat.completion",
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "I wrote the file.",
+          },
+        },
+      ],
+    };
+    const usablePayload: JsonObject = {
+      id: "chatcmpl-usable-tool",
+      object: "chat.completion",
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_retry_toolless",
+                type: "function",
+                function: {
+                  name: "write_to_file",
+                  arguments:
+                    "{\"path\":\"tests/agent-tests/fizz-buzz.ts\",\"content\":\"export const ok = true;\"}",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    let callCount = 0;
+    const app = createProxyApp(
+      createServices((conversationId, payload) => {
+        callCount += 1;
+        return buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson(callCount === 1 ? plainTextStopPayload : usablePayload),
+        );
+      }),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: false,
+          messages: [{ role: "user", content: "Implement fizz buzz." }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "write_to_file",
+                description: "Write file content.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    path: { type: "string" },
+                    content: { type: "string" },
+                  },
+                  required: ["path", "content"],
+                },
+              },
+            },
+          ],
+          tool_choice: "auto",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(callCount).toBe(2);
+    const body = (await response.json()) as JsonObject;
+    const choices = body.choices as JsonObject[];
+    const message = choices[0]?.message as JsonObject;
+    const toolCalls = message.tool_calls as JsonObject[];
+    expect(Array.isArray(toolCalls)).toBeTrue();
+    expect(toolCalls.length).toBe(1);
+  });
 });
 
 function createServices(
@@ -677,6 +775,7 @@ function createOptions(): WrapperOptions {
       invocationType: 4,
       locale: "en-US",
       experienceType: "Default",
+      earlyCompleteOnSimulatedPayload: false,
       entityAnnotationTypes: [],
     },
     defaultModel: "m365-copilot",
@@ -684,6 +783,7 @@ function createOptions(): WrapperOptions {
     conversationTtlMinutes: 180,
     maxAdditionalContextMessages: 16,
     includeConversationIdInResponseBody: true,
+    retrySimulatedToollessResponses: true,
   };
 }
 

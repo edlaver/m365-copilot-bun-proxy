@@ -152,6 +152,7 @@ export type SubstrateOptions = {
   locale: string;
   experienceType: string;
   entityAnnotationTypes: string[];
+  earlyCompleteOnSimulatedPayload: boolean;
 };
 
 export type WrapperOptions = {
@@ -171,4 +172,5 @@ export type WrapperOptions = {
   conversationTtlMinutes: number;
   maxAdditionalContextMessages: number;
   includeConversationIdInResponseBody: boolean;
+  retrySimulatedToollessResponses: boolean;
 };

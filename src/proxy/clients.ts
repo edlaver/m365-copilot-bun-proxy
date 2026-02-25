@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
+import { tryExtractSimulatedResponsePayload } from "./openai";
+import { OpenAiTransformModes } from "./types";
 import type {
   ChatResult,
   CreateConversationResult,
@@ -309,6 +311,7 @@ export class CopilotSubstrateClient {
       let resolvedConversationId = conversationId;
       let responseError: string | null = null;
       let completed = false;
+      let activeBotMessageId: string | null = null;
       const logDeltaSource = async (
         source: "writeAtCursor" | "snapshotText",
         deltaText: string,
@@ -344,6 +347,28 @@ export class CopilotSubstrateClient {
           const json = tryParseJsonObject(frame);
           if (!json) {
             continue;
+          }
+          const frameType = tryGetInt(json, "type");
+
+          const frameRequestId = extractSubstrateRequestId(json);
+          if (frameRequestId && frameRequestId !== clientRequestId) {
+            continue;
+          }
+
+          const frameBotMessageId = extractSubstrateBotMessageId(json);
+          if (
+            !frameRequestId &&
+            activeBotMessageId &&
+            frameBotMessageId &&
+            frameBotMessageId !== activeBotMessageId
+          ) {
+            continue;
+          }
+
+          if (frameRequestId === clientRequestId && frameBotMessageId) {
+            activeBotMessageId = frameBotMessageId;
+          } else if (!activeBotMessageId && frameBotMessageId) {
+            activeBotMessageId = frameBotMessageId;
           }
 
           const extractedConversationId = extractSubstrateConversationId(json);
@@ -389,6 +414,15 @@ export class CopilotSubstrateClient {
                 });
               }
             }
+
+            if (
+              request.transformMode === OpenAiTransformModes.Simulated &&
+              this.options.substrate.earlyCompleteOnSimulatedPayload &&
+              hasCompleteSimulatedPayload(extractedAssistantText)
+            ) {
+              completed = true;
+              break;
+            }
           }
 
           const frameError = tryGetString(json, "error");
@@ -402,7 +436,6 @@ export class CopilotSubstrateClient {
               `Substrate returned result '${resultValue}'.`;
           }
 
-          const frameType = tryGetInt(json, "type");
           if (
             frameType !== null &&
             (frameType === 2 || frameType === 3 || frameType === 7)
@@ -909,6 +942,60 @@ function extractSubstrateConversationId(envelope: JsonObject): string | null {
   return null;
 }
 
+function extractSubstrateRequestId(envelope: JsonObject): string | null {
+  const direct = tryGetString(envelope, "requestId");
+  if (direct) {
+    return direct;
+  }
+
+  const item = envelope.item;
+  if (isJsonObject(item)) {
+    const itemRequestId = tryGetString(item, "requestId");
+    if (itemRequestId) {
+      return itemRequestId;
+    }
+  }
+
+  const args = envelope.arguments;
+  if (!Array.isArray(args)) {
+    return null;
+  }
+  for (const arg of args) {
+    if (!isJsonObject(arg)) {
+      continue;
+    }
+    const argRequestId = tryGetString(arg, "requestId");
+    if (argRequestId) {
+      return argRequestId;
+    }
+    const argItem = arg.item;
+    if (isJsonObject(argItem)) {
+      const argItemRequestId = tryGetString(argItem, "requestId");
+      if (argItemRequestId) {
+        return argItemRequestId;
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractSubstrateBotMessageId(envelope: JsonObject): string | null {
+  const messages = collectMessageObjects(envelope);
+  let lastMessageId: string | null = null;
+  for (const message of messages) {
+    const author = (tryGetString(message, "author") ?? "").toLowerCase();
+    if (author !== "bot") {
+      continue;
+    }
+    const messageId = tryGetString(message, "messageId");
+    if (messageId) {
+      lastMessageId = messageId;
+    }
+  }
+  return lastMessageId;
+}
+
 function extractSubstrateResultMessage(envelope: JsonObject): string | null {
   const item = envelope.item;
   if (isJsonObject(item) && isJsonObject(item.result)) {
@@ -940,6 +1027,14 @@ function extractSubstrateResultValue(envelope: JsonObject): string | null {
 function isSubstrateResultSuccess(resultValue: string): boolean {
   const normalized = resultValue.toLowerCase();
   return normalized === "success" || normalized === "apologyresponsereturned";
+}
+
+function hasCompleteSimulatedPayload(assistantText: string): boolean {
+  return (
+    tryExtractSimulatedResponsePayload(assistantText, "chat.completions") !==
+      null ||
+    tryExtractSimulatedResponsePayload(assistantText, "responses") !== null
+  );
 }
 
 function buildNormalizedConversation(
