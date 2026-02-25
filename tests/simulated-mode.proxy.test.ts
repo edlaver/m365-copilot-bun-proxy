@@ -433,6 +433,75 @@ describe("simulated transform mode proxy flow", () => {
       "This request requires at least one tool call.",
     );
   });
+
+  test("chat/completions repairs malformed tool-call arguments with raw newlines", async () => {
+    const brokenArguments =
+      "{\"path\":\"tests/agent-tests/fizz-buzz.ts\",\"diff\":\"<<<<<<< SEARCH\n:start_line:1\nfoo\n=======\nbar\n>>>>>>> REPLACE\"}";
+    const payloadWithBrokenArguments: JsonObject = {
+      id: "chatcmpl_broken_args",
+      object: "chat.completion",
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            tool_calls: [
+              {
+                id: "call_apply_diff",
+                type: "function",
+                function: {
+                  name: "apply_diff",
+                  arguments: brokenArguments,
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const app = createProxyApp(
+      createServices((conversationId, payload) =>
+        buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson(payloadWithBrokenArguments),
+        ),
+      ),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: false,
+          messages: [{ role: "user", content: "Add comments." }],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as JsonObject;
+    const choices = body.choices as JsonObject[];
+    const message = choices[0]?.message as JsonObject;
+    const toolCall = (message.tool_calls as JsonObject[])[0] as JsonObject;
+    const functionNode = toolCall.function as JsonObject;
+    const argumentsText = String(functionNode.arguments ?? "");
+
+    expect(typeof functionNode.arguments).toBe("string");
+    const parsedArguments = JSON.parse(argumentsText) as Record<string, unknown>;
+    expect(parsedArguments.path).toBe("tests/agent-tests/fizz-buzz.ts");
+    expect(typeof parsedArguments.diff).toBe("string");
+    expect(String(parsedArguments.diff)).toContain("<<<<<<< SEARCH");
+    expect(String(parsedArguments.diff)).toContain(">>>>>>> REPLACE");
+  });
 });
 
 function createServices(

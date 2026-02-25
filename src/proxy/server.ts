@@ -1459,10 +1459,7 @@ function normalizeSimulatedToolCall(toolCall: JsonObject): JsonObject | null {
     functionNode?.arguments !== undefined
       ? functionNode.arguments
       : toolCall.arguments;
-  const argumentsText =
-    typeof argumentsNode === "string"
-      ? argumentsNode
-      : JSON.stringify(argumentsNode ?? {});
+  const argumentsText = normalizeSimulatedToolArguments(argumentsNode);
 
   return {
     id: tryGetString(toolCall, "id") ?? `call_${randomUUID().replaceAll("-", "")}`,
@@ -1472,6 +1469,85 @@ function normalizeSimulatedToolCall(toolCall: JsonObject): JsonObject | null {
       arguments: argumentsText,
     },
   };
+}
+
+function normalizeSimulatedToolArguments(argumentsNode: unknown): string {
+  if (typeof argumentsNode !== "string") {
+    return JSON.stringify(argumentsNode ?? {});
+  }
+
+  const raw = argumentsNode.trim();
+  if (!raw) {
+    return "{}";
+  }
+
+  const repaired = sanitizeJsonControlCharsInsideStringLiterals(raw);
+  for (const candidate of [raw, repaired]) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      return JSON.stringify(parsed);
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return JSON.stringify({ input: raw });
+}
+
+function sanitizeJsonControlCharsInsideStringLiterals(raw: string): string {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < raw.length; index++) {
+    const ch = raw[index];
+    if (!ch) {
+      continue;
+    }
+
+    if (inString) {
+      if (escaped) {
+        output += ch;
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        output += ch;
+        escaped = true;
+        continue;
+      }
+      if (ch === "\"") {
+        output += ch;
+        inString = false;
+        continue;
+      }
+      if (ch === "\n") {
+        output += "\\n";
+        continue;
+      }
+      if (ch === "\r") {
+        output += "\\r";
+        continue;
+      }
+      if (ch === "\t") {
+        output += "\\t";
+        continue;
+      }
+
+      output += ch;
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+      output += ch;
+      continue;
+    }
+
+    output += ch;
+  }
+
+  return output;
 }
 
 function normalizeSimulatedResponsesPayload(
