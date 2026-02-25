@@ -14,7 +14,7 @@ import {
   type JsonObject,
   type WrapperOptions,
 } from "../src/proxy/types";
-import { readSseEvents, tryParseJsonObject } from "../src/proxy/utils";
+import { readSseEvents, tryGetString, tryParseJsonObject } from "../src/proxy/utils";
 
 describe("simulated transform mode proxy flow", () => {
   test("chat/completions non-stream wraps incoming JSON and returns parsed JSON block", async () => {
@@ -219,6 +219,131 @@ describe("simulated transform mode proxy flow", () => {
     const body = (await createResponse.json()) as JsonObject;
     expect(body.id).toBe("resp_simulated_1");
     expect(body.output_text).toBe("hello from responses mode");
+  });
+
+  test("chat/completions normalizes top-level choice-shaped payload into choices array", async () => {
+    const malformedChoiceShape: JsonObject = {
+      index: 0,
+      finish_reason: "tool_calls",
+      message: {
+        role: "assistant",
+        tool_calls: [
+          {
+            id: "attempt-final-001",
+            type: "function",
+            function: {
+              name: "attempt_completion",
+              arguments: {
+                result: "done",
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const app = createProxyApp(
+      createServices((conversationId, payload) =>
+        buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson(malformedChoiceShape),
+        ),
+      ),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: false,
+          messages: [{ role: "user", content: "Complete the task." }],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as JsonObject;
+    expect(Array.isArray(body.choices)).toBeTrue();
+    const firstChoice = (body.choices as JsonObject[])[0] as JsonObject;
+    const message = firstChoice.message as JsonObject;
+    const toolCall = (message.tool_calls as JsonObject[])[0] as JsonObject;
+    const functionNode = toolCall.function as JsonObject;
+
+    expect(tryGetString(message, "role")).toBe("assistant");
+    expect(tryGetString(firstChoice, "finish_reason")).toBe("tool_calls");
+    expect(typeof functionNode.arguments).toBe("string");
+  });
+
+  test("chat/completions normalizes tool-call arguments objects into JSON strings", async () => {
+    const payloadWithObjectArguments: JsonObject = {
+      id: "chatcmpl_obj_args",
+      object: "chat.completion",
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            tool_calls: [
+              {
+                id: "call_write",
+                type: "function",
+                function: {
+                  name: "write_to_file",
+                  arguments: {
+                    path: "tests/agent-tests/fibonacci.ts",
+                    content: "export const x = 1;",
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const app = createProxyApp(
+      createServices((conversationId, payload) =>
+        buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson(payloadWithObjectArguments),
+        ),
+      ),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: false,
+          messages: [{ role: "user", content: "Write the file." }],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as JsonObject;
+    const choices = body.choices as JsonObject[];
+    const message = choices[0]?.message as JsonObject;
+    const toolCall = (message.tool_calls as JsonObject[])[0] as JsonObject;
+    const functionNode = toolCall.function as JsonObject;
+
+    expect(typeof functionNode.arguments).toBe("string");
+    expect(String(functionNode.arguments)).toContain("\"path\"");
+    expect(String(functionNode.arguments)).toContain("\"content\"");
   });
 });
 

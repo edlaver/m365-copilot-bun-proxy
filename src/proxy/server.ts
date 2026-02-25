@@ -1257,6 +1257,9 @@ function normalizeSimulatedChatCompletionPayload(
   includeConversationId: boolean,
 ): JsonObject {
   const normalized: JsonObject = { ...payload };
+  const choices = normalizeSimulatedChatChoices(normalized);
+  normalized.choices = choices;
+
   if (!tryGetString(normalized, "id")) {
     normalized.id = `chatcmpl-${randomUUID().replaceAll("-", "")}`;
   }
@@ -1273,6 +1276,202 @@ function normalizeSimulatedChatCompletionPayload(
     normalized.conversation_id = conversationId;
   }
   return normalized;
+}
+
+function normalizeSimulatedChatChoices(payload: JsonObject): JsonObject[] {
+  const explicitChoices = payload.choices;
+  if (Array.isArray(explicitChoices) && explicitChoices.length > 0) {
+    const normalized = explicitChoices.filter(isJsonObject).map(normalizeSimulatedChatChoice);
+    if (normalized.length > 0) {
+      return normalized;
+    }
+  }
+
+  if (isJsonObject(payload.choice)) {
+    return [normalizeSimulatedChatChoice(payload.choice)];
+  }
+
+  if (looksLikeChatChoice(payload)) {
+    return [normalizeSimulatedChatChoice(payload)];
+  }
+
+  const outputBasedChoice = buildChoiceFromResponsesShape(payload);
+  if (outputBasedChoice) {
+    return [outputBasedChoice];
+  }
+
+  return [
+    normalizeSimulatedChatChoice({
+      index: 0,
+      finish_reason: "stop",
+      message: {
+        role: "assistant",
+        content: tryGetString(payload, "output_text") ?? tryGetString(payload, "text") ?? "",
+      },
+    }),
+  ];
+}
+
+function looksLikeChatChoice(node: JsonObject): boolean {
+  return (
+    isJsonObject(node.message) ||
+    isJsonObject(node.delta) ||
+    node.finish_reason !== undefined ||
+    node.index !== undefined
+  );
+}
+
+function buildChoiceFromResponsesShape(payload: JsonObject): JsonObject | null {
+  const output = payload.output;
+  if (!Array.isArray(output) || output.length === 0) {
+    return null;
+  }
+
+  const toolCalls: JsonObject[] = [];
+  let messageText: string | null = null;
+
+  for (const item of output) {
+    if (!isJsonObject(item)) {
+      continue;
+    }
+    const type = (tryGetString(item, "type") ?? "").toLowerCase();
+    if (type === "function_call") {
+      const toolCall = normalizeSimulatedToolCall({
+        id:
+          tryGetString(item, "call_id") ??
+          tryGetString(item, "id") ??
+          `call_${randomUUID().replaceAll("-", "")}`,
+        type: "function",
+        function: {
+          name: tryGetString(item, "name") ?? "unknown_tool",
+          arguments: item.arguments,
+        },
+      });
+      if (toolCall) {
+        toolCalls.push(toolCall);
+      }
+      continue;
+    }
+    if (type !== "message") {
+      continue;
+    }
+    const text = extractMessageOutputText(item);
+    if (text) {
+      messageText = text;
+    }
+  }
+
+  if (toolCalls.length > 0) {
+    return normalizeSimulatedChatChoice({
+      index: 0,
+      finish_reason: "tool_calls",
+      message: {
+        role: "assistant",
+        content: null,
+        tool_calls: toolCalls,
+      },
+    });
+  }
+
+  return normalizeSimulatedChatChoice({
+    index: 0,
+    finish_reason: "stop",
+    message: {
+      role: "assistant",
+      content:
+        messageText ??
+        tryGetString(payload, "output_text") ??
+        tryGetString(payload, "text") ??
+        "",
+    },
+  });
+}
+
+function normalizeSimulatedChatChoice(choice: JsonObject): JsonObject {
+  const normalized: JsonObject = {
+    index: typeof choice.index === "number" ? choice.index : 0,
+  };
+
+  const messageNode = isJsonObject(choice.message)
+    ? choice.message
+    : isJsonObject(choice.delta)
+      ? choice.delta
+      : {};
+  normalized.message = normalizeSimulatedAssistantMessage(messageNode);
+
+  const finishReason = tryGetString(choice, "finish_reason");
+  if (finishReason) {
+    normalized.finish_reason = finishReason;
+  } else {
+    const toolCalls = (normalized.message as JsonObject).tool_calls;
+    normalized.finish_reason =
+      Array.isArray(toolCalls) && toolCalls.length > 0 ? "tool_calls" : "stop";
+  }
+
+  return normalized;
+}
+
+function normalizeSimulatedAssistantMessage(message: JsonObject): JsonObject {
+  const normalized: JsonObject = { ...message };
+  if (!tryGetString(normalized, "role")) {
+    normalized.role = "assistant";
+  }
+
+  const rawToolCalls = Array.isArray(normalized.tool_calls)
+    ? normalized.tool_calls
+    : [];
+  const toolCalls = rawToolCalls
+    .filter(isJsonObject)
+    .map(normalizeSimulatedToolCall)
+    .filter(isJsonObject);
+  if (toolCalls.length > 0) {
+    normalized.tool_calls = toolCalls;
+    if (normalized.content === undefined) {
+      normalized.content = null;
+    }
+  } else if (normalized.tool_calls !== undefined) {
+    delete normalized.tool_calls;
+  }
+
+  if (normalized.content === undefined || normalized.content === null) {
+    if (toolCalls.length === 0) {
+      normalized.content = "";
+    }
+  } else if (
+    typeof normalized.content !== "string" &&
+    !Array.isArray(normalized.content)
+  ) {
+    normalized.content = JSON.stringify(normalized.content);
+  }
+
+  return normalized;
+}
+
+function normalizeSimulatedToolCall(toolCall: JsonObject): JsonObject | null {
+  const functionNode = isJsonObject(toolCall.function) ? toolCall.function : null;
+  const functionName =
+    tryGetString(functionNode, "name") ?? tryGetString(toolCall, "name");
+  if (!functionName) {
+    return null;
+  }
+
+  const argumentsNode =
+    functionNode?.arguments !== undefined
+      ? functionNode.arguments
+      : toolCall.arguments;
+  const argumentsText =
+    typeof argumentsNode === "string"
+      ? argumentsNode
+      : JSON.stringify(argumentsNode ?? {});
+
+  return {
+    id: tryGetString(toolCall, "id") ?? `call_${randomUUID().replaceAll("-", "")}`,
+    type: "function",
+    function: {
+      name: functionName,
+      arguments: argumentsText,
+    },
+  };
 }
 
 function normalizeSimulatedResponsesPayload(
@@ -1325,8 +1524,14 @@ async function buildSimulatedChatStreamResponse(
   includeConversationId: boolean,
   headers: Headers,
 ): Promise<Response> {
+  const normalized = normalizeSimulatedChatCompletionPayload(
+    payload,
+    model,
+    conversationId,
+    includeConversationId,
+  );
   const assistantResponse =
-    tryBuildAssistantResponseFromChatCompletionPayload(payload);
+    tryBuildAssistantResponseFromChatCompletionPayload(normalized);
   if (!assistantResponse) {
     return writeOpenAiError(
       services,
