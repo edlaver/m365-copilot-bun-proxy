@@ -94,7 +94,8 @@ async function resolveSessionFolderName(
   basePath: string,
   timestamp: string,
 ): Promise<string> {
-  for (let sequence = 1; sequence < 1_000; sequence++) {
+  const nextSequence = (await findMaxSessionPrefix(basePath)) + 1;
+  for (let sequence = nextSequence; sequence < 1_000_000; sequence++) {
     const prefix = String(sequence).padStart(3, "0");
     const candidate = `${prefix}-${timestamp}`;
     if (!(await pathExists(path.join(basePath, candidate)))) {
@@ -105,6 +106,29 @@ async function resolveSessionFolderName(
   throw new Error(
     `Unable to allocate a unique debug session folder under ${basePath}`,
   );
+}
+
+async function findMaxSessionPrefix(basePath: string): Promise<number> {
+  try {
+    const entries = await fs.readdir(basePath, { withFileTypes: true });
+    let max = 0;
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      const match = /^(\d+)-/.exec(entry.name);
+      if (!match) {
+        continue;
+      }
+      const value = Number.parseInt(match[1], 10);
+      if (Number.isFinite(value) && value > max) {
+        max = value;
+      }
+    }
+    return max;
+  } catch {
+    return 0;
+  }
 }
 
 async function pathExists(targetPath: string): Promise<boolean> {
