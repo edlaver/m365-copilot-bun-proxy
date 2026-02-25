@@ -152,6 +152,7 @@ export type WrapperOptions = {
   listenUrl: string;
   debugPath: string | null;
   logLevel: LogLevel;
+  ignoreIncomingAuthorizationHeader: boolean;
   transport: string;
   graphBaseUrl: string;
   createConversationPath: string;

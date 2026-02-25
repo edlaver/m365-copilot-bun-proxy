@@ -12,19 +12,24 @@ const TOKEN_EXPIRY_SKEW_MS = 60_000;
 export class ProxyTokenProvider {
   private readonly tokenPathPromise: Promise<string>;
   private readonly browserStatePathPromise: Promise<string>;
+  private readonly ignoreIncomingAuthorizationHeader: boolean;
   private inFlightAcquirePromise: Promise<string | null> | null = null;
 
-  constructor() {
+  constructor(options?: { ignoreIncomingAuthorizationHeader?: boolean }) {
     this.tokenPathPromise = getTokenPath();
     this.browserStatePathPromise = getBrowserStatePath();
+    this.ignoreIncomingAuthorizationHeader =
+      options?.ignoreIncomingAuthorizationHeader ?? true;
   }
 
   async resolveAuthorizationHeader(
     rawAuthorizationHeader: string | null | undefined,
   ): Promise<string | null> {
-    const providedHeader = normalizeBearerToken(rawAuthorizationHeader);
-    if (providedHeader) {
-      return providedHeader;
+    if (!this.ignoreIncomingAuthorizationHeader) {
+      const providedHeader = normalizeBearerToken(rawAuthorizationHeader);
+      if (providedHeader) {
+        return providedHeader;
+      }
     }
 
     const cachedHeader = await this.tryGetCachedAuthorizationHeader();

@@ -16,7 +16,9 @@ const graphClient = new CopilotGraphClient(options, debugLogger);
 const substrateClient = new CopilotSubstrateClient(options, debugLogger);
 const conversationStore = new ConversationStore(options);
 const responseStore = new ResponseStore(options);
-const tokenProvider = new ProxyTokenProvider();
+const tokenProvider = new ProxyTokenProvider({
+  ignoreIncomingAuthorizationHeader: options.ignoreIncomingAuthorizationHeader,
+});
 
 const app = createProxyApp({
   options,

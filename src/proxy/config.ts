@@ -19,6 +19,7 @@ const WrapperOptionsSchema = z.object({
   listenUrl: z.string().default("http://localhost:4000"),
   debugPath: z.string().nullable().default("./Logs"),
   logLevel: LogLevelSchema.default(LogLevels.Info),
+  ignoreIncomingAuthorizationHeader: z.boolean().default(true),
   transport: z.string().default("graph"),
   graphBaseUrl: z.string().default("https://graph.microsoft.com"),
   createConversationPath: z.string().default("/beta/copilot/conversations"),

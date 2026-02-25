@@ -49,6 +49,8 @@ Configuration is loaded from `config.json` (and `config.{env}.json` when `NODE_E
 
 Substrate settings are grouped under the `substrate` object in config (for example `substrate.hubPath`).
 
+`ignoreIncomingAuthorizationHeader` controls whether inbound `Authorization` headers are used by the proxy. Default is `true`, which makes the proxy ignore incoming auth and use cached/auto-fetched tokens instead.
+
 You can override config values via env vars with the `CONFIG__` prefix, for example:
 
 ```bash
@@ -188,7 +190,13 @@ Streaming (`stream: true`) emits SSE events:
 - `response.completed`
 - `error` (SSE error event on stream failure)
 
-If `Authorization` is missing or empty on chat/responses requests, the proxy now attempts to auto-acquire a token via Playwright and then retries with that token. You can still pass an explicit bearer token when needed.
+By default, the proxy ignores inbound `Authorization` and attempts to use a cached token or auto-acquire one via Playwright for chat/responses requests.
+
+To allow pass-through `Authorization` headers from clients, set:
+
+```bash
+CONFIG__ignoreIncomingAuthorizationHeader=false bun run start:proxy
+```
 
 ## Build executable
 
