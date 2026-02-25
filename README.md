@@ -51,6 +51,13 @@ Substrate settings are grouped under the `substrate` object in config (for examp
 
 `ignoreIncomingAuthorizationHeader` controls whether inbound `Authorization` headers are used by the proxy. Default is `true`, which makes the proxy ignore incoming auth and use cached/auto-fetched tokens instead.
 
+`openAiTransformMode` controls how requests are translated for M365 Copilot:
+
+- `simulated` (default): sends the full incoming OpenAI JSON payload as a markdown JSON block and asks Copilot to respond in the same endpoint format; proxy extracts JSON from the response block and returns it.
+- `mapped`: uses the legacy request/response mapping logic.
+
+Use `CONFIG__openAiTransformMode=mapped` if you need to revert to the legacy behavior.
+
 You can override config values via env vars with the `CONFIG__` prefix, for example:
 
 ```bash

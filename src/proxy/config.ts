@@ -1,7 +1,12 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { LogLevels, type JsonObject, type WrapperOptions } from "./types";
+import {
+  LogLevels,
+  OpenAiTransformModes,
+  type JsonObject,
+  type WrapperOptions,
+} from "./types";
 import { deepMerge, isJsonObject, parseEnvValue, setDeepValue } from "./utils";
 
 const LogLevelSchema = z.preprocess(
@@ -15,10 +20,18 @@ const LogLevelSchema = z.preprocess(
   ]),
 );
 
+const OpenAiTransformModeSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  z.enum([OpenAiTransformModes.Simulated, OpenAiTransformModes.Mapped]),
+);
+
 const WrapperOptionsSchema = z.object({
   listenUrl: z.string().default("http://localhost:4000"),
   debugPath: z.string().nullable().default("./Logs"),
   logLevel: LogLevelSchema.default(LogLevels.Info),
+  openAiTransformMode: OpenAiTransformModeSchema.default(
+    OpenAiTransformModes.Simulated,
+  ),
   ignoreIncomingAuthorizationHeader: z.boolean().default(true),
   transport: z.string().default("graph"),
   graphBaseUrl: z.string().default("https://graph.microsoft.com"),

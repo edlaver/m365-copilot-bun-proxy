@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { buildAssistantResponse } from "../src/proxy/openai";
-import { ToolChoiceModes, type ParsedOpenAiRequest } from "../src/proxy/types";
+import {
+  OpenAiTransformModes,
+  ToolChoiceModes,
+  type ParsedOpenAiRequest,
+} from "../src/proxy/types";
 
 describe("buildAssistantResponse strict tool behavior", () => {
   test("returns strict error when tool_choice is function and no valid tool call is present", () => {
@@ -70,6 +74,7 @@ function createRequest(
   return {
     model: "m365-copilot",
     stream: false,
+    transformMode: OpenAiTransformModes.Mapped,
     promptText: "test",
     userKey: null,
     locationHint: { timeZone: "America/New_York" },

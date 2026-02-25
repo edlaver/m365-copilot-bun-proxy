@@ -17,6 +17,8 @@ import {
   extractCopilotAssistantTextFromStreamData,
   extractCopilotConversationIdFromStream,
   requiresBufferedAssistantResponse,
+  tryBuildAssistantResponseFromChatCompletionPayload,
+  tryExtractSimulatedResponsePayload,
 } from "./openai";
 import { ResponseStore } from "./response-store";
 import {
@@ -44,6 +46,7 @@ import {
   tryParseResponsesRequest,
 } from "./request-parser";
 import {
+  OpenAiTransformModes,
   ToolChoiceModes,
   TransportNames,
   type JsonObject,
@@ -56,8 +59,10 @@ import {
 import { ProxyTokenProvider } from "./token-provider";
 import {
   extractGraphErrorMessage,
+  isJsonObject,
   nowUnix,
   readSseEvents,
+  tryGetString,
   tryReadJsonPayload,
 } from "./utils";
 
@@ -322,6 +327,27 @@ async function handleChat(
           parsedRequest.promptText,
         ) ??
         "";
+      if (parsedRequest.transformMode === OpenAiTransformModes.Simulated) {
+        const simulatedPayload = tryExtractSimulatedResponsePayload(assistantText);
+        if (!simulatedPayload) {
+          return writeOpenAiError(
+            services,
+            502,
+            "Simulated mode response did not include a valid JSON object.",
+            "api_error",
+            "invalid_simulated_payload",
+          );
+        }
+        return buildSimulatedChatStreamResponse(
+          services,
+          parsedRequest.model,
+          conversationId,
+          simulatedPayload,
+          options.includeConversationIdInResponseBody,
+          responseHeaders,
+        );
+      }
+
       let assistantResponse = buildAssistantResponse(
         parsedRequest,
         assistantText,
@@ -447,6 +473,29 @@ async function handleChat(
       parsedRequest.promptText,
     ) ??
     "";
+  if (parsedRequest.transformMode === OpenAiTransformModes.Simulated) {
+    const simulatedPayload = tryExtractSimulatedResponsePayload(assistantText);
+    if (!simulatedPayload) {
+      return writeOpenAiError(
+        services,
+        502,
+        "Simulated mode response did not include a valid JSON object.",
+        "api_error",
+        "invalid_simulated_payload",
+      );
+    }
+    const normalized = normalizeSimulatedChatCompletionPayload(
+      simulatedPayload,
+      parsedRequest.model,
+      conversationId,
+      options.includeConversationIdInResponseBody,
+    );
+    const body = JSON.stringify(normalized);
+    responseHeaders.set("content-type", "application/json");
+    await debugLogger.logOutgoingResponse(200, responseHeaders.entries(), body);
+    return new Response(body, { status: 200, headers: responseHeaders });
+  }
+
   let assistantResponse = buildAssistantResponse(
     parsedRequest,
     assistantText,
@@ -729,6 +778,26 @@ async function handleResponsesCreate(
           baseRequest.promptText,
         ) ??
         "";
+      if (baseRequest.transformMode === OpenAiTransformModes.Simulated) {
+        const simulatedPayload = tryExtractSimulatedResponsePayload(assistantText);
+        if (!simulatedPayload) {
+          return writeOpenAiError(
+            services,
+            502,
+            "Simulated mode response did not include a valid JSON object.",
+            "api_error",
+            "invalid_simulated_payload",
+          );
+        }
+        return buildSimulatedResponsesStreamResponse(
+          services,
+          parsedRequest,
+          conversationId,
+          simulatedPayload,
+          responseHeaders,
+        );
+      }
+
       let assistantResponse = buildAssistantResponse(baseRequest, assistantText);
       if (
         shouldRetryStrictToolOutput(
@@ -846,6 +915,31 @@ async function handleResponsesCreate(
     chatResponse.assistantText ??
     extractCopilotAssistantText(chatResponse.responseJson, baseRequest.promptText) ??
     "";
+  if (baseRequest.transformMode === OpenAiTransformModes.Simulated) {
+    const simulatedPayload = tryExtractSimulatedResponsePayload(assistantText);
+    if (!simulatedPayload) {
+      return writeOpenAiError(
+        services,
+        502,
+        "Simulated mode response did not include a valid JSON object.",
+        "api_error",
+        "invalid_simulated_payload",
+      );
+    }
+
+    const normalized = normalizeSimulatedResponsesPayload(
+      simulatedPayload,
+      parsedRequest,
+      conversationId,
+      options.includeConversationIdInResponseBody,
+    );
+    responseStore.set(normalized.responseId, normalized.responseBody, conversationId);
+    responseHeaders.set("content-type", "application/json");
+    const body = JSON.stringify(normalized.responseBody);
+    await debugLogger.logOutgoingResponse(200, responseHeaders.entries(), body);
+    return new Response(body, { status: 200, headers: responseHeaders });
+  }
+
   let assistantResponse = buildAssistantResponse(baseRequest, assistantText);
   if (
     shouldRetryStrictToolOutput(
@@ -1154,6 +1248,230 @@ async function buildBufferedResponsesStreamResponse(
   headers.set("x-m365-conversation-id", conversationId);
   await services.debugLogger.logOutgoingResponse(200, headers.entries(), null);
   return new Response(stream, { status: 200, headers });
+}
+
+function normalizeSimulatedChatCompletionPayload(
+  payload: JsonObject,
+  model: string,
+  conversationId: string,
+  includeConversationId: boolean,
+): JsonObject {
+  const normalized: JsonObject = { ...payload };
+  if (!tryGetString(normalized, "id")) {
+    normalized.id = `chatcmpl-${randomUUID().replaceAll("-", "")}`;
+  }
+  if (!tryGetString(normalized, "object")) {
+    normalized.object = "chat.completion";
+  }
+  if (normalized.created === undefined) {
+    normalized.created = nowUnix();
+  }
+  if (!tryGetString(normalized, "model")) {
+    normalized.model = model;
+  }
+  if (includeConversationId) {
+    normalized.conversation_id = conversationId;
+  }
+  return normalized;
+}
+
+function normalizeSimulatedResponsesPayload(
+  payload: JsonObject,
+  parsedRequest: ParsedResponsesRequest,
+  conversationId: string,
+  includeConversationId: boolean,
+): { responseId: string; responseBody: JsonObject } {
+  const responseBody: JsonObject = { ...payload };
+  const responseId = tryGetString(responseBody, "id") ?? createOpenAiResponseId();
+  responseBody.id = responseId;
+  if (!tryGetString(responseBody, "object")) {
+    responseBody.object = "response";
+  }
+  if (responseBody.created_at === undefined) {
+    responseBody.created_at = nowUnix();
+  }
+  if (!tryGetString(responseBody, "status")) {
+    responseBody.status = "completed";
+  }
+  if (!tryGetString(responseBody, "model")) {
+    responseBody.model = parsedRequest.base.model;
+  }
+  if (!Array.isArray(responseBody.output)) {
+    const outputText =
+      tryGetString(responseBody, "output_text") ??
+      tryGetString(responseBody, "text") ??
+      "";
+    responseBody.output = [
+      buildMessageOutputItem(createOpenAiOutputItemId("msg"), outputText, "completed"),
+    ];
+  }
+  if (responseBody.output_text === undefined) {
+    responseBody.output_text = extractResponseOutputText(
+      Array.isArray(responseBody.output) ? responseBody.output : [],
+    );
+  }
+  if (includeConversationId) {
+    responseBody.conversation_id = conversationId;
+  }
+
+  return { responseId, responseBody };
+}
+
+async function buildSimulatedChatStreamResponse(
+  services: Services,
+  model: string,
+  conversationId: string,
+  payload: JsonObject,
+  includeConversationId: boolean,
+  headers: Headers,
+): Promise<Response> {
+  const assistantResponse =
+    tryBuildAssistantResponseFromChatCompletionPayload(payload);
+  if (!assistantResponse) {
+    return writeOpenAiError(
+      services,
+      502,
+      "Simulated chat payload was not a valid chat completion object.",
+      "api_error",
+      "invalid_simulated_payload",
+    );
+  }
+
+  return buildAssistantStreamResponse(
+    services,
+    model,
+    conversationId,
+    assistantResponse,
+    includeConversationId,
+    headers,
+  );
+}
+
+async function buildSimulatedResponsesStreamResponse(
+  services: Services,
+  parsedRequest: ParsedResponsesRequest,
+  conversationId: string,
+  payload: JsonObject,
+  headers: Headers,
+): Promise<Response> {
+  const includeConversationId = services.options.includeConversationIdInResponseBody;
+  const normalized = normalizeSimulatedResponsesPayload(
+    payload,
+    parsedRequest,
+    conversationId,
+    includeConversationId,
+  );
+  const responseBody = normalized.responseBody;
+  const responseId = normalized.responseId;
+  const outputItems = Array.isArray(responseBody.output)
+    ? responseBody.output.filter(isJsonObject)
+    : [];
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const encoder = new TextEncoder();
+      const writeDataEvent = (event: JsonObject) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      };
+
+      const inProgress: JsonObject = {
+        ...responseBody,
+        status: "in_progress",
+      };
+      writeDataEvent(buildResponseCreatedEvent(inProgress));
+      writeDataEvent(buildResponseInProgressEvent(inProgress));
+
+      for (let index = 0; index < outputItems.length; index++) {
+        const item = outputItems[index];
+        const itemId = tryGetString(item, "id") ?? createOpenAiOutputItemId("out");
+        const itemType = (tryGetString(item, "type") ?? "").toLowerCase();
+        if (itemType === "message") {
+          const text = extractMessageOutputText(item);
+          writeDataEvent(
+            buildResponseOutputItemAddedEvent(
+              responseId,
+              index,
+              buildMessageOutputItem(itemId, "", "in_progress"),
+            ),
+          );
+          if (text) {
+            writeDataEvent(
+              buildResponseOutputTextDeltaEvent(responseId, index, itemId, text),
+            );
+          }
+          writeDataEvent(
+            buildResponseOutputTextDoneEvent(responseId, index, itemId, text),
+          );
+          writeDataEvent(
+            buildResponseOutputItemDoneEvent(
+              responseId,
+              index,
+              buildMessageOutputItem(itemId, text, "completed"),
+            ),
+          );
+          continue;
+        }
+
+        writeDataEvent(buildResponseOutputItemAddedEvent(responseId, index, item));
+        writeDataEvent(buildResponseOutputItemDoneEvent(responseId, index, item));
+      }
+
+      const completed: JsonObject = {
+        ...responseBody,
+        status: "completed",
+      };
+      writeDataEvent(buildResponseCompletedEvent(completed));
+      services.responseStore.set(responseId, completed, conversationId);
+      controller.close();
+    },
+  });
+
+  headers.set("content-type", "text/event-stream");
+  headers.set("cache-control", "no-cache");
+  headers.set("connection", "keep-alive");
+  headers.set("x-m365-conversation-id", conversationId);
+  await services.debugLogger.logOutgoingResponse(200, headers.entries(), null);
+  return new Response(stream, { status: 200, headers });
+}
+
+function extractResponseOutputText(outputItems: unknown[]): string {
+  const textParts: string[] = [];
+  for (const item of outputItems) {
+    if (!isJsonObject(item)) {
+      continue;
+    }
+    const text = extractMessageOutputText(item);
+    if (text) {
+      textParts.push(text);
+    }
+  }
+  return textParts.join("");
+}
+
+function extractMessageOutputText(outputItem: JsonObject): string {
+  if ((tryGetString(outputItem, "type") ?? "").toLowerCase() !== "message") {
+    return "";
+  }
+  const content = outputItem.content;
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const textParts: string[] = [];
+  for (const part of content) {
+    if (!isJsonObject(part)) {
+      continue;
+    }
+    const type = (tryGetString(part, "type") ?? "").toLowerCase();
+    if (type !== "output_text" && type !== "text") {
+      continue;
+    }
+    const text = tryGetString(part, "text");
+    if (text) {
+      textParts.push(text);
+    }
+  }
+  return textParts.join("");
 }
 
 async function transformGraphStreamToResponses(

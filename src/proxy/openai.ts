@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  OpenAiTransformModes,
   ResponseFormatTypes,
   ToolChoiceModes,
   type JsonObject,
@@ -103,7 +104,11 @@ export function buildChatCompletionChunk(
 }
 
 export function requiresBufferedAssistantResponse(request: ParsedOpenAiRequest): boolean {
-  return request.tooling.tools.length > 0 || request.responseFormat !== null;
+  return (
+    request.transformMode === OpenAiTransformModes.Simulated ||
+    request.tooling.tools.length > 0 ||
+    request.responseFormat !== null
+  );
 }
 
 export function buildAssistantResponse(
@@ -138,6 +143,88 @@ export function buildAssistantResponse(
     content: normalizeStructuredContent(normalizedText, request.responseFormat),
     toolCalls: [],
     finishReason: "stop",
+    strictToolErrorMessage: null,
+  };
+}
+
+export function tryExtractSimulatedResponsePayload(
+  assistantText: string,
+): JsonObject | null {
+  if (!assistantText.trim()) {
+    return null;
+  }
+  for (const candidate of enumerateJsonCandidates(assistantText)) {
+    const parsed = tryParseJsonNode(candidate);
+    if (isJsonObject(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+export function tryBuildAssistantResponseFromChatCompletionPayload(
+  payload: JsonObject,
+): OpenAiAssistantResponse | null {
+  const choices = payload.choices;
+  if (!Array.isArray(choices) || choices.length === 0) {
+    return null;
+  }
+
+  const first = choices[0];
+  if (!isJsonObject(first)) {
+    return null;
+  }
+
+  const finishReason = pickString(first.finish_reason) ?? "stop";
+  const message = isJsonObject(first.message) ? first.message : null;
+  if (!message) {
+    return {
+      content: "",
+      toolCalls: [],
+      finishReason,
+      strictToolErrorMessage: null,
+    };
+  }
+
+  const toolCallsNode = message.tool_calls;
+  if (Array.isArray(toolCallsNode) && toolCallsNode.length > 0) {
+    const toolCalls: OpenAiAssistantToolCall[] = [];
+    for (const toolCallNode of toolCallsNode) {
+      if (!isJsonObject(toolCallNode)) {
+        continue;
+      }
+      const functionNode = isJsonObject(toolCallNode.function)
+        ? toolCallNode.function
+        : null;
+      const name = pickString(toolCallNode.name, functionNode?.name);
+      if (!name) {
+        continue;
+      }
+      toolCalls.push({
+        id:
+          pickString(toolCallNode.id) ??
+          `call_${randomUUID().replaceAll("-", "")}`,
+        name,
+        argumentsJson: normalizeArgumentsJson(
+          toolCallNode.arguments ?? functionNode?.arguments ?? null,
+        ),
+      });
+    }
+
+    if (toolCalls.length > 0) {
+      return {
+        content: null,
+        toolCalls,
+        finishReason: "tool_calls",
+        strictToolErrorMessage: null,
+      };
+    }
+  }
+
+  return {
+    content: normalizeMessageContent(message.content),
+    toolCalls: [],
+    finishReason,
     strictToolErrorMessage: null,
   };
 }
@@ -358,6 +445,34 @@ function normalizeStructuredContent(
     return assistantText;
   }
   return JSON.stringify(node);
+}
+
+function normalizeMessageContent(contentNode: JsonValue | undefined): string {
+  if (typeof contentNode === "string") {
+    return contentNode;
+  }
+  if (!Array.isArray(contentNode)) {
+    return "";
+  }
+
+  const textParts: string[] = [];
+  for (const item of contentNode) {
+    if (typeof item === "string" && item.trim()) {
+      textParts.push(item.trim());
+      continue;
+    }
+    if (!isJsonObject(item)) {
+      continue;
+    }
+    const type = (pickString(item.type) ?? "").toLowerCase();
+    if (
+      (type === "" || type === "text" || type === "output_text") &&
+      pickString(item.text)
+    ) {
+      textParts.push(pickString(item.text) ?? "");
+    }
+  }
+  return textParts.join("\n");
 }
 
 function tryExtractJsonNode(rawText: string): JsonValue | null {

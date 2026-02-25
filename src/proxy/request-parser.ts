@@ -1,4 +1,5 @@
 import {
+  OpenAiTransformModes,
   ResponseFormatTypes,
   ToolChoiceModes,
   TransportNames,
@@ -30,6 +31,22 @@ export function normalizeTransport(
     return TransportNames.Graph;
   }
   return transport.trim().toLowerCase();
+}
+
+export function normalizeOpenAiTransformMode(
+  mode: string | null | undefined,
+): string {
+  if (!mode || !mode.trim()) {
+    return OpenAiTransformModes.Simulated;
+  }
+  const normalized = mode.trim().toLowerCase();
+  return normalized === OpenAiTransformModes.Mapped
+    ? OpenAiTransformModes.Mapped
+    : OpenAiTransformModes.Simulated;
+}
+
+export function isSimulatedOpenAiTransformMode(mode: string): boolean {
+  return normalizeOpenAiTransformMode(mode) === OpenAiTransformModes.Simulated;
 }
 
 export function isSupportedTransport(
@@ -140,6 +157,18 @@ export function tryParseOpenAiRequest(
   requestJson: JsonObject,
   options: WrapperOptions,
 ): { ok: true; request: ParsedOpenAiRequest } | { ok: false; error: string } {
+  const transformMode = normalizeOpenAiTransformMode(options.openAiTransformMode);
+  if (transformMode === OpenAiTransformModes.Simulated) {
+    return {
+      ok: true,
+      request: buildSimulatedOpenAiRequest(
+        requestJson,
+        options,
+        "chat.completions",
+      ),
+    };
+  }
+
   const messagesNode = requestJson.messages;
   if (!Array.isArray(messagesNode) || messagesNode.length === 0) {
     return {
@@ -212,6 +241,7 @@ export function tryParseOpenAiRequest(
   const parsedRequest: ParsedOpenAiRequest = {
     model,
     stream,
+    transformMode,
     promptText: prompt.content,
     userKey: tryGetString(requestJson, "user"),
     locationHint: buildLocationHint(requestJson, options.defaultTimeZone),
@@ -241,6 +271,20 @@ export function tryParseResponsesRequest(
 ):
   | { ok: true; request: ParsedResponsesRequest }
   | { ok: false; error: string } {
+  const transformMode = normalizeOpenAiTransformMode(options.openAiTransformMode);
+  if (transformMode === OpenAiTransformModes.Simulated) {
+    const normalizedInput = normalizeResponsesInput(requestJson.input);
+    return {
+      ok: true,
+      request: {
+        base: buildSimulatedOpenAiRequest(requestJson, options, "responses"),
+        previousResponseId: tryGetString(requestJson, "previous_response_id"),
+        inputItemsForStorage: normalizedInput.inputItemsForStorage,
+        instructions: tryGetString(requestJson, "instructions"),
+      },
+    };
+  }
+
   const normalized = cloneJsonValue(requestJson);
   const normalizedInput = normalizeResponsesInput(requestJson.input);
   if (normalizedInput.messages.length === 0) {
@@ -286,6 +330,51 @@ export function tryParseResponsesRequest(
       instructions,
     },
   };
+}
+
+function buildSimulatedOpenAiRequest(
+  requestJson: JsonObject,
+  options: WrapperOptions,
+  endpointFormat: "chat.completions" | "responses",
+): ParsedOpenAiRequest {
+  const model =
+    tryGetString(requestJson, "model") ||
+    (options.defaultModel?.trim() ? options.defaultModel : "m365-copilot");
+
+  return {
+    model,
+    stream: tryGetBoolean(requestJson, "stream") === true,
+    transformMode: OpenAiTransformModes.Simulated,
+    promptText: buildSimulatedPrompt(endpointFormat, requestJson),
+    userKey: tryGetString(requestJson, "user"),
+    locationHint: buildLocationHint(requestJson, options.defaultTimeZone),
+    contextualResources: buildContextualResources(requestJson),
+    additionalContext: [],
+    tooling: parseTooling(requestJson),
+    responseFormat: parseResponseFormat(requestJson),
+    reasoningEffort: tryGetString(requestJson, "reasoning_effort"),
+    temperature: tryGetDouble(requestJson, "temperature"),
+  };
+}
+
+function buildSimulatedPrompt(
+  endpointFormat: "chat.completions" | "responses",
+  requestJson: JsonObject,
+): string {
+  const endpointPath =
+    endpointFormat === "responses" ? "/v1/responses" : "/v1/chat/completions";
+  const serializedRequest = JSON.stringify(requestJson, null, 2);
+
+  return [
+    `You are simulating the OpenAI ${endpointFormat} endpoint.`,
+    `The JSON payload below is an entire request for POST ${endpointPath}.`,
+    `Interpret it exactly in OpenAI ${endpointFormat} format and produce the corresponding response in the same format.`,
+    "Return exactly one markdown JSON code block containing a single valid JSON object and no surrounding prose.",
+    'If the payload has "stream": true, still return the final completed JSON object (not SSE events).',
+    "```json",
+    serializedRequest,
+    "```",
+  ].join("\n");
 }
 
 function resolvePrompt(

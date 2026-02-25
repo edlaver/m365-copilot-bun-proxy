@@ -32,6 +32,11 @@ export const ResponseFormatTypes = {
   JsonSchema: "json_schema",
 } as const;
 
+export const OpenAiTransformModes = {
+  Simulated: "simulated",
+  Mapped: "mapped",
+} as const;
+
 export type ContextMessage = {
   text: string;
   description: string | null;
@@ -72,6 +77,7 @@ export type OpenAiAssistantResponse = {
 export type ParsedOpenAiRequest = {
   model: string;
   stream: boolean;
+  transformMode: string;
   promptText: string;
   userKey: string | null;
   locationHint: JsonObject;
@@ -152,6 +158,7 @@ export type WrapperOptions = {
   listenUrl: string;
   debugPath: string | null;
   logLevel: LogLevel;
+  openAiTransformMode: string;
   ignoreIncomingAuthorizationHeader: boolean;
   transport: string;
   graphBaseUrl: string;
