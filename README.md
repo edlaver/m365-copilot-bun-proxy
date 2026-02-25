@@ -35,6 +35,7 @@ bun run start:proxy -- --debug=false
 
 Logging level is configured with `logLevel` in `config.json` (default `info`):
 
+- Each proxy startup with `--debug` writes logs into a unique session subfolder under `debugPath` using a 3-digit prefix (for example `logs/001-2026-02-25T16-58-11-123Z/`, then `logs/002-2026-02-25T16-58-11-123Z/` if needed to avoid collisions).
 - Request logs (`incoming-request`, `request`, `substrate-request`) are always written when debug logging is enabled.
 - Response log filtering by level:
 - `trace`: includes `substrate-delta`

@@ -1,4 +1,5 @@
 import { parseArgs } from "util";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import { CopilotGraphClient, CopilotSubstrateClient } from "./clients";
 import { loadWrapperOptions } from "./config";
@@ -7,10 +8,15 @@ import { DebugMarkdownLogger } from "./logger";
 import { ResponseStore } from "./response-store";
 import { createProxyApp } from "./server";
 import { ProxyTokenProvider } from "./token-provider";
+import type { WrapperOptions } from "./types";
 import { parseListenUrl } from "./utils";
 
-const options = await loadWrapperOptions(process.cwd());
+const loadedOptions = await loadWrapperOptions(process.cwd());
 const debugEnabled = parseDebugFlag();
+const options = await withSessionDebugPath(loadedOptions, debugEnabled);
+if (debugEnabled && options.debugPath?.trim()) {
+  await fs.mkdir(options.debugPath, { recursive: true });
+}
 const debugLogger = new DebugMarkdownLogger(options, debugEnabled);
 const graphClient = new CopilotGraphClient(options, debugLogger);
 const substrateClient = new CopilotSubstrateClient(options, debugLogger);
@@ -64,4 +70,48 @@ function parseDebugFlag(): boolean {
   });
 
   return values.debug ?? false;
+}
+
+async function withSessionDebugPath(
+  options: WrapperOptions,
+  debugEnabled: boolean,
+): Promise<WrapperOptions> {
+  if (!debugEnabled || !options.debugPath?.trim()) {
+    return options;
+  }
+
+  const basePath = options.debugPath.trim();
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const sessionFolder = await resolveSessionFolderName(basePath, timestamp);
+
+  return {
+    ...options,
+    debugPath: path.join(basePath, sessionFolder),
+  };
+}
+
+async function resolveSessionFolderName(
+  basePath: string,
+  timestamp: string,
+): Promise<string> {
+  for (let sequence = 1; sequence < 1_000; sequence++) {
+    const prefix = String(sequence).padStart(3, "0");
+    const candidate = `${prefix}-${timestamp}`;
+    if (!(await pathExists(path.join(basePath, candidate)))) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    `Unable to allocate a unique debug session folder under ${basePath}`,
+  );
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
