@@ -328,12 +328,73 @@ async function handleChat(
         ) ??
         "";
       if (parsedRequest.transformMode === OpenAiTransformModes.Simulated) {
-        const simulatedPayload = tryExtractSimulatedResponsePayload(assistantText);
-        if (!simulatedPayload) {
+        let simulatedPayload = tryExtractSimulatedResponsePayload(
+          assistantText,
+          "chat.completions",
+        );
+        let normalizedSimulatedPayload = simulatedPayload
+          ? normalizeSimulatedChatCompletionPayload(
+              simulatedPayload,
+              parsedRequest.model,
+              conversationId,
+              options.includeConversationIdInResponseBody,
+            )
+          : null;
+
+        if (
+          !normalizedSimulatedPayload ||
+          !hasUsableSimulatedChatCompletionPayload(normalizedSimulatedPayload)
+        ) {
+          const retryResult = await executeChatTurnWithRecovery();
+          if (!retryResult.isSuccess) {
+            return writeFromUpstreamFailure(
+              services,
+              retryResult.statusCode,
+              retryResult.rawBody,
+              selectedTransport === TransportNames.Substrate
+                ? "Substrate chat request failed."
+                : "Microsoft Graph chat request failed.",
+              selectedTransport === TransportNames.Substrate
+                ? "substrate_error"
+                : "graph_error",
+            );
+          }
+          if (retryResult.conversationId) {
+            conversationId = retryResult.conversationId;
+            responseHeaders.set("x-m365-conversation-id", conversationId);
+            if (scopedConversationKey) {
+              conversationStore.set(scopedConversationKey, conversationId);
+            }
+          }
+          const retryAssistantText =
+            retryResult.assistantText ??
+            extractCopilotAssistantText(
+              retryResult.responseJson,
+              parsedRequest.promptText,
+            ) ??
+            "";
+          simulatedPayload = tryExtractSimulatedResponsePayload(
+            retryAssistantText,
+            "chat.completions",
+          );
+          normalizedSimulatedPayload = simulatedPayload
+            ? normalizeSimulatedChatCompletionPayload(
+                simulatedPayload,
+                parsedRequest.model,
+                conversationId,
+                options.includeConversationIdInResponseBody,
+              )
+            : null;
+        }
+
+        if (
+          !normalizedSimulatedPayload ||
+          !hasUsableSimulatedChatCompletionPayload(normalizedSimulatedPayload)
+        ) {
           return writeOpenAiError(
             services,
             502,
-            "Simulated mode response did not include a valid JSON object.",
+            "Simulated mode response did not include a usable assistant message or tool call payload.",
             "api_error",
             "invalid_simulated_payload",
           );
@@ -342,7 +403,7 @@ async function handleChat(
           services,
           parsedRequest.model,
           conversationId,
-          simulatedPayload,
+          normalizedSimulatedPayload,
           options.includeConversationIdInResponseBody,
           responseHeaders,
         );
@@ -474,22 +535,71 @@ async function handleChat(
     ) ??
     "";
   if (parsedRequest.transformMode === OpenAiTransformModes.Simulated) {
-    const simulatedPayload = tryExtractSimulatedResponsePayload(assistantText);
-    if (!simulatedPayload) {
+    let simulatedPayload = tryExtractSimulatedResponsePayload(
+      assistantText,
+      "chat.completions",
+    );
+    let normalized = simulatedPayload
+      ? normalizeSimulatedChatCompletionPayload(
+          simulatedPayload,
+          parsedRequest.model,
+          conversationId,
+          options.includeConversationIdInResponseBody,
+        )
+      : null;
+
+    if (!normalized || !hasUsableSimulatedChatCompletionPayload(normalized)) {
+      const retryResult = await executeChatTurnWithRecovery();
+      if (!retryResult.isSuccess) {
+        return writeFromUpstreamFailure(
+          services,
+          retryResult.statusCode,
+          retryResult.rawBody,
+          selectedTransport === TransportNames.Substrate
+            ? "Substrate chat request failed."
+            : "Microsoft Graph chat request failed.",
+          selectedTransport === TransportNames.Substrate
+            ? "substrate_error"
+            : "graph_error",
+        );
+      }
+      if (retryResult.conversationId) {
+        conversationId = retryResult.conversationId;
+        responseHeaders.set("x-m365-conversation-id", conversationId);
+        if (scopedConversationKey) {
+          conversationStore.set(scopedConversationKey, conversationId);
+        }
+      }
+      const retryAssistantText =
+        retryResult.assistantText ??
+        extractCopilotAssistantText(
+          retryResult.responseJson,
+          parsedRequest.promptText,
+        ) ??
+        "";
+      simulatedPayload = tryExtractSimulatedResponsePayload(
+        retryAssistantText,
+        "chat.completions",
+      );
+      normalized = simulatedPayload
+        ? normalizeSimulatedChatCompletionPayload(
+            simulatedPayload,
+            parsedRequest.model,
+            conversationId,
+            options.includeConversationIdInResponseBody,
+          )
+        : null;
+    }
+
+    if (!normalized || !hasUsableSimulatedChatCompletionPayload(normalized)) {
       return writeOpenAiError(
         services,
         502,
-        "Simulated mode response did not include a valid JSON object.",
+        "Simulated mode response did not include a usable assistant message or tool call payload.",
         "api_error",
         "invalid_simulated_payload",
       );
     }
-    const normalized = normalizeSimulatedChatCompletionPayload(
-      simulatedPayload,
-      parsedRequest.model,
-      conversationId,
-      options.includeConversationIdInResponseBody,
-    );
     const body = JSON.stringify(normalized);
     responseHeaders.set("content-type", "application/json");
     await debugLogger.logOutgoingResponse(200, responseHeaders.entries(), body);
@@ -779,12 +889,67 @@ async function handleResponsesCreate(
         ) ??
         "";
       if (baseRequest.transformMode === OpenAiTransformModes.Simulated) {
-        const simulatedPayload = tryExtractSimulatedResponsePayload(assistantText);
-        if (!simulatedPayload) {
+        let simulatedPayload = tryExtractSimulatedResponsePayload(
+          assistantText,
+          "responses",
+        );
+        let normalized = simulatedPayload
+          ? normalizeSimulatedResponsesPayload(
+              simulatedPayload,
+              parsedRequest,
+              conversationId,
+              options.includeConversationIdInResponseBody,
+            )
+          : null;
+
+        if (!normalized || !hasUsableSimulatedResponsesPayload(normalized.responseBody)) {
+          const retryResult = await executeChatTurnWithRecovery();
+          if (!retryResult.isSuccess) {
+            return writeFromUpstreamFailure(
+              services,
+              retryResult.statusCode,
+              retryResult.rawBody,
+              selectedTransport === TransportNames.Substrate
+                ? "Substrate chat request failed."
+                : "Microsoft Graph chat request failed.",
+              selectedTransport === TransportNames.Substrate
+                ? "substrate_error"
+                : "graph_error",
+            );
+          }
+          if (retryResult.conversationId) {
+            conversationId = retryResult.conversationId;
+            responseHeaders.set("x-m365-conversation-id", conversationId);
+            if (scopedConversationKey) {
+              conversationStore.set(scopedConversationKey, conversationId);
+            }
+          }
+          const retryAssistantText =
+            retryResult.assistantText ??
+            extractCopilotAssistantText(
+              retryResult.responseJson,
+              baseRequest.promptText,
+            ) ??
+            "";
+          simulatedPayload = tryExtractSimulatedResponsePayload(
+            retryAssistantText,
+            "responses",
+          );
+          normalized = simulatedPayload
+            ? normalizeSimulatedResponsesPayload(
+                simulatedPayload,
+                parsedRequest,
+                conversationId,
+                options.includeConversationIdInResponseBody,
+              )
+            : null;
+        }
+
+        if (!normalized || !hasUsableSimulatedResponsesPayload(normalized.responseBody)) {
           return writeOpenAiError(
             services,
             502,
-            "Simulated mode response did not include a valid JSON object.",
+            "Simulated mode response did not include a usable response output payload.",
             "api_error",
             "invalid_simulated_payload",
           );
@@ -793,7 +958,7 @@ async function handleResponsesCreate(
           services,
           parsedRequest,
           conversationId,
-          simulatedPayload,
+          normalized.responseBody,
           responseHeaders,
         );
       }
@@ -916,23 +1081,72 @@ async function handleResponsesCreate(
     extractCopilotAssistantText(chatResponse.responseJson, baseRequest.promptText) ??
     "";
   if (baseRequest.transformMode === OpenAiTransformModes.Simulated) {
-    const simulatedPayload = tryExtractSimulatedResponsePayload(assistantText);
-    if (!simulatedPayload) {
+    let simulatedPayload = tryExtractSimulatedResponsePayload(
+      assistantText,
+      "responses",
+    );
+    let normalized = simulatedPayload
+      ? normalizeSimulatedResponsesPayload(
+          simulatedPayload,
+          parsedRequest,
+          conversationId,
+          options.includeConversationIdInResponseBody,
+        )
+      : null;
+
+    if (!normalized || !hasUsableSimulatedResponsesPayload(normalized.responseBody)) {
+      const retryResult = await executeChatTurnWithRecovery();
+      if (!retryResult.isSuccess) {
+        return writeFromUpstreamFailure(
+          services,
+          retryResult.statusCode,
+          retryResult.rawBody,
+          selectedTransport === TransportNames.Substrate
+            ? "Substrate chat request failed."
+            : "Microsoft Graph chat request failed.",
+          selectedTransport === TransportNames.Substrate
+            ? "substrate_error"
+            : "graph_error",
+        );
+      }
+      if (retryResult.conversationId) {
+        conversationId = retryResult.conversationId;
+        responseHeaders.set("x-m365-conversation-id", conversationId);
+        if (scopedConversationKey) {
+          conversationStore.set(scopedConversationKey, conversationId);
+        }
+      }
+      const retryAssistantText =
+        retryResult.assistantText ??
+        extractCopilotAssistantText(
+          retryResult.responseJson,
+          baseRequest.promptText,
+        ) ??
+        "";
+      simulatedPayload = tryExtractSimulatedResponsePayload(
+        retryAssistantText,
+        "responses",
+      );
+      normalized = simulatedPayload
+        ? normalizeSimulatedResponsesPayload(
+            simulatedPayload,
+            parsedRequest,
+            conversationId,
+            options.includeConversationIdInResponseBody,
+          )
+        : null;
+    }
+
+    if (!normalized || !hasUsableSimulatedResponsesPayload(normalized.responseBody)) {
       return writeOpenAiError(
         services,
         502,
-        "Simulated mode response did not include a valid JSON object.",
+        "Simulated mode response did not include a usable response output payload.",
         "api_error",
         "invalid_simulated_payload",
       );
     }
 
-    const normalized = normalizeSimulatedResponsesPayload(
-      simulatedPayload,
-      parsedRequest,
-      conversationId,
-      options.includeConversationIdInResponseBody,
-    );
     responseStore.set(normalized.responseId, normalized.responseBody, conversationId);
     responseHeaders.set("content-type", "application/json");
     const body = JSON.stringify(normalized.responseBody);
@@ -1278,6 +1492,17 @@ function normalizeSimulatedChatCompletionPayload(
   return normalized;
 }
 
+function hasUsableSimulatedChatCompletionPayload(payload: JsonObject): boolean {
+  const assistantResponse = tryBuildAssistantResponseFromChatCompletionPayload(payload);
+  if (!assistantResponse) {
+    return false;
+  }
+  if (assistantResponse.toolCalls.length > 0) {
+    return true;
+  }
+  return Boolean(assistantResponse.content?.trim());
+}
+
 function normalizeSimulatedChatChoices(payload: JsonObject): JsonObject[] {
   const explicitChoices = payload.choices;
   if (Array.isArray(explicitChoices) && explicitChoices.length > 0) {
@@ -1590,6 +1815,31 @@ function normalizeSimulatedResponsesPayload(
   }
 
   return { responseId, responseBody };
+}
+
+function hasUsableSimulatedResponsesPayload(responseBody: JsonObject): boolean {
+  const outputText = tryGetString(responseBody, "output_text");
+  if (outputText?.trim()) {
+    return true;
+  }
+
+  const output = responseBody.output;
+  if (!Array.isArray(output)) {
+    return false;
+  }
+  for (const item of output) {
+    if (!isJsonObject(item)) {
+      continue;
+    }
+    const type = (tryGetString(item, "type") ?? "").toLowerCase();
+    if (type === "function_call") {
+      return true;
+    }
+    if (type === "message" && extractMessageOutputText(item).trim()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function buildSimulatedChatStreamResponse(

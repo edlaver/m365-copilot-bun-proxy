@@ -149,17 +149,131 @@ export function buildAssistantResponse(
 
 export function tryExtractSimulatedResponsePayload(
   assistantText: string,
+  endpoint: "chat.completions" | "responses",
 ): JsonObject | null {
   if (!assistantText.trim()) {
     return null;
   }
-  for (const candidate of enumerateJsonCandidates(assistantText)) {
-    const parsed = tryParseJsonNode(candidate);
+
+  const candidates: JsonObject[] = [];
+  for (const rawCandidate of enumerateJsonCandidates(assistantText)) {
+    const parsed = tryParseJsonNode(rawCandidate);
     if (isJsonObject(parsed)) {
-      return parsed;
+      candidates.push(parsed);
     }
   }
-  return null;
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  let best: JsonObject | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const candidate of candidates) {
+    const score = scoreSimulatedResponseCandidate(candidate, endpoint);
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+  if (!best || bestScore <= 0) {
+    return null;
+  }
+  return best;
+}
+
+function scoreSimulatedResponseCandidate(
+  candidate: JsonObject,
+  endpoint: "chat.completions" | "responses",
+): number {
+  let score = 0;
+  if (isRequestLikeSimulatedPayload(candidate)) {
+    score -= 180;
+  }
+
+  if (endpoint === "chat.completions") {
+    const choices = candidate.choices;
+    if (Array.isArray(choices) && choices.length > 0) {
+      score += 220;
+      const first = choices[0];
+      if (isJsonObject(first)) {
+        const message = first.message;
+        if (isJsonObject(message)) {
+          score += 80;
+          if (pickString(message.role)?.toLowerCase() === "assistant") {
+            score += 20;
+          }
+          const toolCalls = message.tool_calls;
+          if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+            score += 90;
+          }
+          const content = message.content;
+          if (typeof content === "string" && content.trim()) {
+            score += 35;
+          } else if (Array.isArray(content) && content.length > 0) {
+            score += 20;
+          }
+        }
+        if (pickString(first.finish_reason)) {
+          score += 15;
+        }
+      }
+    }
+
+    if (looksLikeChatChoiceObject(candidate)) {
+      score += 75;
+    }
+    if ((pickString(candidate.object) ?? "").toLowerCase() === "chat.completion") {
+      score += 70;
+    }
+    if ((pickString(candidate.id) ?? "").toLowerCase().startsWith("chatcmpl")) {
+      score += 50;
+    }
+    if (Array.isArray(candidate.output)) {
+      score += 25;
+    }
+  } else {
+    if ((pickString(candidate.object) ?? "").toLowerCase() === "response") {
+      score += 120;
+    }
+    if (Array.isArray(candidate.output) && candidate.output.length > 0) {
+      score += 160;
+    }
+    if (pickString(candidate.status)) {
+      score += 25;
+    }
+    if (typeof candidate.output_text === "string" && candidate.output_text.trim()) {
+      score += 40;
+    }
+    if (Array.isArray(candidate.choices)) {
+      score -= 20;
+    }
+  }
+
+  return score;
+}
+
+function isRequestLikeSimulatedPayload(candidate: JsonObject): boolean {
+  const hasMessagesArray = Array.isArray(candidate.messages);
+  const hasInputField = candidate.input !== undefined;
+  const hasTools = Array.isArray(candidate.tools);
+  const hasToolChoice =
+    typeof candidate.tool_choice === "string" || isJsonObject(candidate.tool_choice);
+  const hasParallelFlag = candidate.parallel_tool_calls !== undefined;
+  const lacksResponseShape =
+    !Array.isArray(candidate.choices) && !Array.isArray(candidate.output);
+
+  return (
+    (hasMessagesArray || hasInputField) &&
+    (hasTools || hasToolChoice || hasParallelFlag || lacksResponseShape)
+  );
+}
+
+function looksLikeChatChoiceObject(candidate: JsonObject): boolean {
+  return (
+    isJsonObject(candidate.message) ||
+    isJsonObject(candidate.delta) ||
+    candidate.finish_reason !== undefined
+  );
 }
 
 export function tryBuildAssistantResponseFromChatCompletionPayload(
