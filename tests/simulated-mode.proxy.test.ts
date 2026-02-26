@@ -171,6 +171,102 @@ describe("simulated transform mode proxy flow", () => {
     expect(sawDone).toBeTrue();
   });
 
+  test("chat/completions stream in simulated mode uses substrate stream path", async () => {
+    const simulatedCompletion: JsonObject = {
+      id: "chatcmpl_simulated_stream_substrate",
+      object: "chat.completion",
+      created: 1700000000,
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "hello from simulated substrate stream",
+          },
+          finish_reason: "stop",
+        },
+      ],
+    };
+
+    let chatCallCount = 0;
+    let chatStreamCallCount = 0;
+    const app = createProxyApp(
+      createSubstrateStreamingServices(async (onStreamUpdate) => {
+        chatStreamCallCount += 1;
+        await onStreamUpdate({
+          deltaText: toMarkdownJson(simulatedCompletion),
+          conversationId: "conv_simulated_substrate_stream",
+        });
+        return buildGraphChatResult(
+          "conv_simulated_substrate_stream",
+          {},
+          toMarkdownJson(simulatedCompletion),
+        );
+      }, () => {
+        chatCallCount += 1;
+        return buildGraphChatResult(
+          "conv_simulated_substrate_stream",
+          {},
+          toMarkdownJson(simulatedCompletion),
+        );
+      }),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Substrate,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: true,
+          messages: [{ role: "user", content: "Say hello." }],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).not.toBeNull();
+    expect(chatCallCount).toBe(0);
+    expect(chatStreamCallCount).toBe(1);
+
+    let streamedText = "";
+    let sawDone = false;
+    for await (const event of readSseEvents(response.body!)) {
+      const data = event.data.trim();
+      if (!data) {
+        continue;
+      }
+      if (data.toLowerCase() === "[done]") {
+        sawDone = true;
+        break;
+      }
+      const chunk = tryParseJsonObject(data);
+      const choices = chunk?.choices;
+      if (!Array.isArray(choices) || choices.length === 0) {
+        continue;
+      }
+      const first = choices[0];
+      if (!first || typeof first !== "object" || Array.isArray(first)) {
+        continue;
+      }
+      const delta = (first as Record<string, unknown>).delta;
+      if (!delta || typeof delta !== "object" || Array.isArray(delta)) {
+        continue;
+      }
+      const content = (delta as Record<string, unknown>).content;
+      if (typeof content === "string") {
+        streamedText += content;
+      }
+    }
+
+    expect(streamedText).toContain("hello from simulated substrate stream");
+    expect(sawDone).toBeTrue();
+  });
+
   test("responses non-stream returns simulated response payload object", async () => {
     const simulatedResponse: JsonObject = {
       id: "resp_simulated_1",
@@ -1024,6 +1120,78 @@ function createServices(
     chatStream: async (): Promise<ChatResult> => {
       throw new Error("substrate stream is not used in this test.");
     },
+  } as unknown as CopilotSubstrateClient;
+
+  const debugLogger = {
+    logIncomingRequest: async () => {},
+    logOutgoingResponse: async () => {},
+    logUpstreamRequest: async () => {},
+    logUpstreamResponse: async () => {},
+    logSubstrateFrame: async () => {},
+  } as unknown as DebugMarkdownLogger;
+
+  const tokenProvider = {
+    resolveAuthorizationHeader: async () => "Bearer unit-test-token",
+  } as unknown as ProxyTokenProvider;
+
+  return {
+    options,
+    debugLogger,
+    graphClient,
+    substrateClient,
+    conversationStore,
+    responseStore,
+    tokenProvider,
+  };
+}
+
+function createSubstrateStreamingServices(
+  onChatStream: (
+    onStreamUpdate: (update: {
+      deltaText: string | null;
+      conversationId: string | null;
+    }) => Promise<void>,
+  ) => Promise<ChatResult>,
+  onChat: () => ChatResult,
+): Parameters<typeof createProxyApp>[0] {
+  const options = createOptions();
+  options.transport = TransportNames.Substrate;
+  const conversationStore = new ConversationStore(options);
+  const responseStore = new ResponseStore(options);
+
+  const graphClient = {
+    createConversation: async (): Promise<CreateConversationResult> => ({
+      isSuccess: true,
+      statusCode: 200,
+      conversationId: "conv_graph_unused",
+      rawBody: "{}",
+    }),
+    chat: async (): Promise<ChatResult> => {
+      throw new Error("graph chat is not used in this test.");
+    },
+    chatOverStream: async (): Promise<Response> => {
+      throw new Error("graph stream is not used in this test.");
+    },
+  } as unknown as CopilotGraphClient;
+
+  const substrateClient = {
+    createConversation: (): CreateConversationResult => ({
+      isSuccess: true,
+      statusCode: 200,
+      conversationId: "conv_simulated_substrate_stream",
+      rawBody: "{}",
+    }),
+    chat: async (): Promise<ChatResult> => onChat(),
+    chatStream: async (
+      _authorizationHeader: string,
+      _conversationId: string,
+      _request: unknown,
+      _isStartOfSession: boolean,
+      onStreamUpdate: (update: {
+        deltaText: string | null;
+        conversationId: string | null;
+      }) => Promise<void>,
+    ): Promise<ChatResult> => onChatStream(onStreamUpdate),
   } as unknown as CopilotSubstrateClient;
 
   const debugLogger = {

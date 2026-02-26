@@ -297,6 +297,21 @@ async function handleChat(
   };
 
   if (parsedRequest.stream) {
+    if (
+      parsedRequest.transformMode === OpenAiTransformModes.Simulated &&
+      selectedTransport === TransportNames.Substrate
+    ) {
+      return streamSubstrateAsSimulatedOpenAi(
+        services,
+        authorizationHeader,
+        conversationId,
+        parsedRequest,
+        createdConversation,
+        scopedConversationKey,
+        responseHeaders,
+      );
+    }
+
     if (shouldBufferAssistant) {
       const buffered = await executeChatTurnWithRecovery();
       if (!buffered.isSuccess) {
@@ -2751,6 +2766,219 @@ async function transformGraphStreamToOpenAi(
   headers.set("content-type", "text/event-stream");
   headers.set("cache-control", "no-cache");
   headers.set("connection", "keep-alive");
+  await services.debugLogger.logOutgoingResponse(200, headers.entries(), null);
+  return new Response(stream, { status: 200, headers });
+}
+
+async function streamSubstrateAsSimulatedOpenAi(
+  services: Services,
+  authorizationHeader: string,
+  initialConversationId: string,
+  parsedRequest: ParsedOpenAiRequest,
+  createdConversation: boolean,
+  scopedConversationKey: string | null,
+  headers: Headers,
+): Promise<Response> {
+  const completionId = `chatcmpl-${randomUUID().replaceAll("-", "")}`;
+  const created = nowUnix();
+  let conversationId = initialConversationId;
+  let streamInitialized = false;
+  let emittedContent = "";
+  let emittedToolCalls = false;
+  let accumulatedAssistantText = "";
+
+  const stream = new ReadableStream<Uint8Array>({
+    start: async (controller) => {
+      const encoder = new TextEncoder();
+      const writeChunk = (
+        role: string | null,
+        content: string | null,
+        finishReason: string | null,
+        toolCalls?: unknown,
+      ) => {
+        const chunk = buildChatCompletionChunk(
+          completionId,
+          created,
+          parsedRequest.model,
+          role,
+          content,
+          finishReason,
+          services.options.includeConversationIdInResponseBody
+            ? conversationId
+            : null,
+          toolCalls as never,
+        );
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+        );
+      };
+      const ensureInitialized = () => {
+        if (streamInitialized) {
+          return;
+        }
+        streamInitialized = true;
+        writeChunk("assistant", null, null);
+      };
+      const emitAssistantResponse = (assistantResponse: OpenAiAssistantResponse) => {
+        ensureInitialized();
+        if (assistantResponse.toolCalls.length > 0) {
+          if (!emittedToolCalls) {
+            emittedToolCalls = true;
+            writeChunk(
+              null,
+              null,
+              null,
+              buildToolCallsDelta(assistantResponse.toolCalls),
+            );
+          }
+          return;
+        }
+
+        const content = assistantResponse.content ?? "";
+        const delta = computeTrailingDelta(emittedContent, content);
+        if (!delta) {
+          return;
+        }
+        emittedContent += delta;
+        writeChunk(null, delta, null);
+      };
+      const tryEmitFromAccumulatedText = (): OpenAiAssistantResponse | null => {
+        const simulatedPayload = tryExtractSimulatedResponsePayload(
+          accumulatedAssistantText,
+          "chat.completions",
+        );
+        if (!simulatedPayload) {
+          return null;
+        }
+        const normalizedPayload = normalizeSimulatedChatCompletionPayload(
+          simulatedPayload,
+          parsedRequest.model,
+          conversationId,
+          services.options.includeConversationIdInResponseBody,
+        );
+        const assistantResponse =
+          tryBuildAssistantResponseFromChatCompletionPayload(normalizedPayload);
+        if (!assistantResponse) {
+          return null;
+        }
+        emitAssistantResponse(assistantResponse);
+        return assistantResponse;
+      };
+
+      const substrateResponse = await services.substrateClient.chatStream(
+        authorizationHeader,
+        conversationId,
+        parsedRequest,
+        createdConversation,
+        async (update) => {
+          if (update.conversationId) {
+            conversationId = update.conversationId;
+            if (scopedConversationKey) {
+              services.conversationStore.set(
+                scopedConversationKey,
+                conversationId,
+              );
+            }
+          }
+          if (!update.deltaText) {
+            return;
+          }
+          accumulatedAssistantText += update.deltaText;
+          tryEmitFromAccumulatedText();
+        },
+      );
+
+      if (!substrateResponse.isSuccess) {
+        if (streamInitialized) {
+          const details = extractGraphErrorMessage(substrateResponse.rawBody);
+          const message = details
+            ? `Substrate chat request failed. ${details}`
+            : "Substrate chat request failed.";
+          writeChunk(null, null, "error");
+          controller.enqueue(
+            encoder.encode(
+              `event: error\ndata: ${JSON.stringify({
+                error: {
+                  message,
+                  type: "api_error",
+                  param: null,
+                  code: "substrate_error",
+                },
+              })}\n\n`,
+            ),
+          );
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+          return;
+        }
+        const failure = await writeFromUpstreamFailure(
+          services,
+          substrateResponse.statusCode,
+          substrateResponse.rawBody,
+          "Substrate chat request failed.",
+          "substrate_error",
+        );
+        controller.enqueue(
+          encoder.encode(`event: error\ndata: ${await failure.text()}\n\n`),
+        );
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+        return;
+      }
+
+      if (substrateResponse.conversationId) {
+        conversationId = substrateResponse.conversationId;
+      }
+      const finalAssistantText =
+        substrateResponse.assistantText ??
+        extractCopilotAssistantText(
+          substrateResponse.responseJson,
+          parsedRequest.promptText,
+        ) ??
+        "";
+      const trailingAssistantTextDelta = computeTrailingDelta(
+        accumulatedAssistantText,
+        finalAssistantText,
+      );
+      if (trailingAssistantTextDelta) {
+        accumulatedAssistantText += trailingAssistantTextDelta;
+      }
+
+      const finalAssistantResponse = tryEmitFromAccumulatedText();
+      if (!finalAssistantResponse) {
+        const message =
+          "Simulated mode response did not include a usable assistant message or tool call payload.";
+        if (streamInitialized) {
+          writeChunk(null, null, "error");
+        }
+        controller.enqueue(
+          encoder.encode(
+            `event: error\ndata: ${JSON.stringify({
+              error: {
+                message,
+                type: "api_error",
+                param: null,
+                code: "invalid_simulated_payload",
+              },
+            })}\n\n`,
+          ),
+        );
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+        return;
+      }
+
+      ensureInitialized();
+      writeChunk(null, null, finalAssistantResponse.finishReason);
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+
+  headers.set("content-type", "text/event-stream");
+  headers.set("cache-control", "no-cache");
+  headers.set("connection", "keep-alive");
+  headers.set("x-m365-conversation-id", initialConversationId);
   await services.debugLogger.logOutgoingResponse(200, headers.entries(), null);
   return new Response(stream, { status: 200, headers });
 }
