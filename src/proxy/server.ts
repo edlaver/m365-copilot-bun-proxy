@@ -18,6 +18,7 @@ import {
   extractCopilotConversationIdFromStream,
   requiresBufferedAssistantResponse,
   tryBuildAssistantResponseFromChatCompletionPayload,
+  tryExtractIncrementalSimulatedChatContent,
   tryExtractSimulatedResponsePayload,
 } from "./openai";
 import { ResponseStore } from "./response-store";
@@ -2789,17 +2790,127 @@ async function streamSubstrateAsSimulatedOpenAi(
   let accumulatedAssistantText = "";
   const shouldHoldForToolValidation =
     parsedRequest.tooling.tools.length > 0 &&
-    parsedRequest.tooling.toolChoiceMode !== ToolChoiceModes.None;
+    (parsedRequest.tooling.toolChoiceMode === ToolChoiceModes.Required ||
+      parsedRequest.tooling.toolChoiceMode === ToolChoiceModes.Function);
+  const incrementalContentStreamingEnabled =
+    services.options.substrate.incrementalSimulatedContentStreaming === true &&
+    !shouldHoldForToolValidation &&
+    parsedRequest.responseFormat === null;
+  let incrementalContentStreamingSuppressed = false;
+  let incrementalSuppressionReason: string | null = null;
+  let incrementalExtractionAttemptCount = 0;
+  let incrementalEmissionCount = 0;
+  const streamStartedAtMs = Date.now();
+  let firstDeltaAtMs: number | null = null;
+  let firstParseableAtMs: number | null = null;
+  let firstOpenAiChunkAtMs: number | null = null;
+  let firstOpenAiPayloadChunkAtMs: number | null = null;
+  let deltaChunkCount = 0;
+  let deltaCharCount = 0;
+  let parseAttemptCount = 0;
+  let parseSuccessCount = 0;
+  let openAiChunkCount = 0;
+  let openAiInitChunkCount = 0;
+  let openAiPayloadChunkCount = 0;
+  let openAiContentChunkCount = 0;
+  let openAiToolChunkCount = 0;
+  let openAiFinishChunkCount = 0;
+  let openAiErrorChunkCount = 0;
+  let bufferedRetryCount = 0;
+  const retryReasons: string[] = [];
+  let usedBufferedFallbackAfterStreamFailure = false;
 
   const stream = new ReadableStream<Uint8Array>({
     start: async (controller) => {
       const encoder = new TextEncoder();
+      const toOffsetMs = (value: number | null): number | null =>
+        value === null ? null : value - streamStartedAtMs;
+      const logStreamingDiagnostics = async (
+        outcome: string,
+        details: JsonObject = {},
+      ): Promise<void> => {
+        const diagnosticsLogger = services.debugLogger as DebugMarkdownLogger & {
+          logSimulatedStreamingDiagnostics?: (payload: JsonObject) => Promise<void>;
+        };
+        if (
+          typeof diagnosticsLogger.logSimulatedStreamingDiagnostics !==
+          "function"
+        ) {
+          return;
+        }
+        await diagnosticsLogger.logSimulatedStreamingDiagnostics({
+          completionId,
+          conversationIdInitial: initialConversationId,
+          conversationIdFinal: conversationId,
+          requestModel: parsedRequest.model,
+          toolChoiceMode: parsedRequest.tooling.toolChoiceMode,
+          holdForToolValidation: shouldHoldForToolValidation,
+          incrementalContentStreamingEnabled,
+          incrementalContentStreamingSuppressed,
+          incrementalSuppressionReason,
+          incrementalExtractionAttemptCount,
+          incrementalEmissionCount,
+          outcome,
+          streamInitialized,
+          usedBufferedFallbackAfterStreamFailure,
+          bufferedRetryCount,
+          retryReasons,
+          accumulatedAssistantTextLength: accumulatedAssistantText.length,
+          emittedContentLength: emittedContent.length,
+          emittedToolCalls,
+          deltaChunkCount,
+          deltaCharCount,
+          parseAttemptCount,
+          parseSuccessCount,
+          openAiChunkCount,
+          openAiInitChunkCount,
+          openAiPayloadChunkCount,
+          openAiContentChunkCount,
+          openAiToolChunkCount,
+          openAiFinishChunkCount,
+          openAiErrorChunkCount,
+          streamDurationMs: Date.now() - streamStartedAtMs,
+          firstDeltaOffsetMs: toOffsetMs(firstDeltaAtMs),
+          firstParseableOffsetMs: toOffsetMs(firstParseableAtMs),
+          firstOpenAiChunkOffsetMs: toOffsetMs(firstOpenAiChunkAtMs),
+          firstOpenAiPayloadChunkOffsetMs: toOffsetMs(
+            firstOpenAiPayloadChunkAtMs,
+          ),
+          parseableBeforeFirstPayloadChunk:
+            firstParseableAtMs !== null &&
+            (firstOpenAiPayloadChunkAtMs === null ||
+              firstParseableAtMs <= firstOpenAiPayloadChunkAtMs),
+          ...details,
+        });
+      };
       const writeChunk = (
         role: string | null,
         content: string | null,
         finishReason: string | null,
         toolCalls?: unknown,
       ) => {
+        const nowMs = Date.now();
+        if (firstOpenAiChunkAtMs === null) {
+          firstOpenAiChunkAtMs = nowMs;
+        }
+        openAiChunkCount += 1;
+        if (role === "assistant" && content === null && finishReason === null && !toolCalls) {
+          openAiInitChunkCount += 1;
+        } else {
+          openAiPayloadChunkCount += 1;
+          if (firstOpenAiPayloadChunkAtMs === null) {
+            firstOpenAiPayloadChunkAtMs = nowMs;
+          }
+          if (toolCalls) {
+            openAiToolChunkCount += 1;
+          } else if (finishReason === "error") {
+            openAiErrorChunkCount += 1;
+          } else if (finishReason !== null) {
+            openAiFinishChunkCount += 1;
+          } else if (content !== null) {
+            openAiContentChunkCount += 1;
+          }
+        }
         const chunk = buildChatCompletionChunk(
           completionId,
           created,
@@ -2850,6 +2961,7 @@ async function streamSubstrateAsSimulatedOpenAi(
         payload: JsonObject;
         assistantResponse: OpenAiAssistantResponse;
       } | null => {
+        parseAttemptCount += 1;
         const simulatedPayload = tryExtractSimulatedResponsePayload(
           accumulatedAssistantText,
           "chat.completions",
@@ -2868,6 +2980,10 @@ async function streamSubstrateAsSimulatedOpenAi(
         if (!assistantResponse) {
           return null;
         }
+        parseSuccessCount += 1;
+        if (firstParseableAtMs === null) {
+          firstParseableAtMs = Date.now();
+        }
         return { payload, assistantResponse };
       };
       const tryEmitFromAccumulatedText = (): {
@@ -2885,6 +3001,37 @@ async function streamSubstrateAsSimulatedOpenAi(
         emitAssistantResponse(assistantResponse);
         return parsed;
       };
+      const tryEmitIncrementalContentFromAccumulatedText = (): void => {
+        if (
+          !incrementalContentStreamingEnabled ||
+          incrementalContentStreamingSuppressed ||
+          emittedToolCalls
+        ) {
+          return;
+        }
+        incrementalExtractionAttemptCount += 1;
+        const incrementalExtraction =
+          tryExtractIncrementalSimulatedChatContent(accumulatedAssistantText);
+        if (incrementalExtraction.hasToolCalls) {
+          incrementalContentStreamingSuppressed = true;
+          incrementalSuppressionReason = "tool_calls_detected";
+          return;
+        }
+        if (incrementalExtraction.content === null) {
+          return;
+        }
+        ensureInitialized();
+        const delta = computeTrailingDelta(
+          emittedContent,
+          incrementalExtraction.content,
+        );
+        if (!delta) {
+          return;
+        }
+        emittedContent += delta;
+        incrementalEmissionCount += 1;
+        writeChunk(null, delta, null);
+      };
       const executeBufferedTurnWithRecovery = async (): Promise<ChatResult> => {
         let result = await services.substrateClient.chat(
           authorizationHeader,
@@ -2899,10 +3046,12 @@ async function streamSubstrateAsSimulatedOpenAi(
             result,
           )
         ) {
+          retryReasons.push("substrate_no_assistant_content");
           const createRetryConversation = services.substrateClient.createConversation();
           if (createRetryConversation.isSuccess && createRetryConversation.conversationId) {
             conversationId = createRetryConversation.conversationId;
             isStartOfSession = true;
+            bufferedRetryCount += 1;
             if (scopedConversationKey) {
               services.conversationStore.set(scopedConversationKey, conversationId);
             }
@@ -2961,13 +3110,23 @@ async function streamSubstrateAsSimulatedOpenAi(
           if (!update.deltaText) {
             return;
           }
+          deltaChunkCount += 1;
+          deltaCharCount += update.deltaText.length;
+          if (firstDeltaAtMs === null) {
+            firstDeltaAtMs = Date.now();
+          }
           accumulatedAssistantText += update.deltaText;
-          tryEmitFromAccumulatedText();
+          const streamedParsed = tryEmitFromAccumulatedText();
+          if (!streamedParsed) {
+            tryEmitIncrementalContentFromAccumulatedText();
+          }
         },
       );
 
       if (!substrateResponse.isSuccess) {
         if (!streamInitialized) {
+          usedBufferedFallbackAfterStreamFailure = true;
+          retryReasons.push("chat_stream_failed_then_buffered_retry");
           const bufferedRetry = await executeBufferedTurnWithRecovery();
           if (bufferedRetry.isSuccess) {
             substrateResponse = bufferedRetry;
@@ -2995,6 +3154,9 @@ async function streamSubstrateAsSimulatedOpenAi(
             ),
           );
           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          await logStreamingDiagnostics("upstream_failure_after_partial_emit", {
+            statusCode: substrateResponse.statusCode,
+          });
           controller.close();
           return;
         }
@@ -3009,6 +3171,9 @@ async function streamSubstrateAsSimulatedOpenAi(
           encoder.encode(`event: error\ndata: ${await failure.text()}\n\n`),
         );
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        await logStreamingDiagnostics("upstream_failure_before_emit", {
+          statusCode: substrateResponse.statusCode,
+        });
         controller.close();
         return;
       }
@@ -3019,15 +3184,26 @@ async function streamSubstrateAsSimulatedOpenAi(
       appendAssistantText(substrateResponse);
 
       let finalParsed = tryEmitFromAccumulatedText();
-      const shouldRetrySimulatedPayload =
+      const shouldRetryInvalidToolPayload =
         finalParsed &&
-        (shouldRetrySimulatedInvalidChatToolPayload(finalParsed.payload) ||
-          shouldRetrySimulatedToollessChatPayload(
-            services.options,
-            parsedRequest,
-            finalParsed.payload,
-          ));
+        shouldRetrySimulatedInvalidChatToolPayload(finalParsed.payload);
+      const shouldRetryToollessPayload =
+        finalParsed &&
+        shouldRetrySimulatedToollessChatPayload(
+          services.options,
+          parsedRequest,
+          finalParsed.payload,
+        );
+      const shouldRetrySimulatedPayload =
+        Boolean(shouldRetryInvalidToolPayload || shouldRetryToollessPayload);
       if (shouldRetrySimulatedPayload && !streamInitialized) {
+        if (shouldRetryInvalidToolPayload) {
+          retryReasons.push("invalid_chat_tool_payload");
+        }
+        if (shouldRetryToollessPayload) {
+          retryReasons.push("toolless_chat_payload");
+        }
+        bufferedRetryCount += 1;
         const bufferedRetry = await executeBufferedTurnWithRecovery();
         if (!bufferedRetry.isSuccess) {
           const failure = await writeFromUpstreamFailure(
@@ -3041,6 +3217,9 @@ async function streamSubstrateAsSimulatedOpenAi(
             encoder.encode(`event: error\ndata: ${await failure.text()}\n\n`),
           );
           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          await logStreamingDiagnostics("buffered_retry_failed", {
+            statusCode: bufferedRetry.statusCode,
+          });
           controller.close();
           return;
         }
@@ -3067,6 +3246,7 @@ async function streamSubstrateAsSimulatedOpenAi(
           ),
         );
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        await logStreamingDiagnostics("invalid_simulated_payload");
         controller.close();
         return;
       }
@@ -3075,6 +3255,10 @@ async function streamSubstrateAsSimulatedOpenAi(
       ensureInitialized();
       writeChunk(null, null, finalParsed.assistantResponse.finishReason);
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      await logStreamingDiagnostics("completed", {
+        finalFinishReason: finalParsed.assistantResponse.finishReason,
+        finalHasToolCalls: finalParsed.assistantResponse.toolCalls.length > 0,
+      });
       controller.close();
     },
   });

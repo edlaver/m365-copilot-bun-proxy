@@ -59,6 +59,8 @@ Substrate settings are grouped under the `substrate` object in config (for examp
 - `simulated` (default): sends the full incoming OpenAI JSON payload as a markdown JSON block and asks Copilot to respond in the same endpoint format; proxy extracts JSON from the response block and returns it.
 - `mapped`: uses the legacy request/response mapping logic.
 
+`substrate.incrementalSimulatedContentStreaming` (default `false`) enables a guarded incremental extractor for simulated streaming mode. When enabled, the proxy may emit partial `choices[0].message.content` deltas before the full simulated JSON becomes parseable, and automatically suppresses incremental emission if `tool_calls` is detected.
+
 Use `CONFIG__openAiTransformMode=mapped` if you need to revert to the legacy behavior.
 
 You can override config values via env vars with the `CONFIG__` prefix, for example:

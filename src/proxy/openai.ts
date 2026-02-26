@@ -181,6 +181,56 @@ export function tryExtractSimulatedResponsePayload(
   return best;
 }
 
+export function tryExtractIncrementalSimulatedChatContent(
+  assistantText: string,
+): { content: string | null; hasToolCalls: boolean } {
+  const candidate = extractLikelyIncrementalSimulatedJson(assistantText);
+  if (!candidate) {
+    return { content: null, hasToolCalls: false };
+  }
+
+  const messageKeyIndex = candidate.indexOf("\"message\"");
+  if (messageKeyIndex < 0) {
+    return { content: null, hasToolCalls: false };
+  }
+  const messageValueStart = findJsonValueStart(candidate, messageKeyIndex);
+  if (messageValueStart < 0 || candidate[messageValueStart] !== "{") {
+    return { content: null, hasToolCalls: false };
+  }
+  const messageFragment = candidate.slice(messageValueStart);
+
+  const contentKeyIndex = messageFragment.indexOf("\"content\"");
+  const toolCallsKeyIndex = messageFragment.indexOf("\"tool_calls\"");
+  const hasToolCalls = toolCallsKeyIndex >= 0;
+  if (
+    toolCallsKeyIndex >= 0 &&
+    (contentKeyIndex < 0 || toolCallsKeyIndex < contentKeyIndex)
+  ) {
+    return { content: null, hasToolCalls: true };
+  }
+  if (contentKeyIndex < 0) {
+    return { content: null, hasToolCalls };
+  }
+
+  const contentValueStart = findJsonValueStart(messageFragment, contentKeyIndex);
+  if (contentValueStart < 0) {
+    return { content: null, hasToolCalls };
+  }
+
+  const firstValueChar = messageFragment[contentValueStart];
+  if (firstValueChar === "\"") {
+    return {
+      content: decodeJsonStringPrefix(messageFragment, contentValueStart + 1),
+      hasToolCalls,
+    };
+  }
+  if (messageFragment.startsWith("null", contentValueStart)) {
+    return { content: "", hasToolCalls };
+  }
+
+  return { content: null, hasToolCalls };
+}
+
 function scoreSimulatedResponseCandidate(
   candidate: JsonObject,
   endpoint: "chat.completions" | "responses",
@@ -250,6 +300,119 @@ function scoreSimulatedResponseCandidate(
   }
 
   return score;
+}
+
+function extractLikelyIncrementalSimulatedJson(assistantText: string): string | null {
+  const trimmed = assistantText.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  let candidate = assistantText;
+  const lastJsonFence = candidate.lastIndexOf("```json");
+  if (lastJsonFence >= 0) {
+    candidate = candidate.slice(lastJsonFence + "```json".length);
+  } else {
+    const lastFence = candidate.lastIndexOf("```");
+    if (lastFence >= 0) {
+      candidate = candidate.slice(lastFence + "```".length);
+    }
+  }
+
+  const firstBrace = candidate.indexOf("{");
+  if (firstBrace >= 0) {
+    candidate = candidate.slice(firstBrace);
+  }
+
+  candidate = candidate.trimStart();
+  if (!candidate) {
+    return null;
+  }
+  return candidate;
+}
+
+function findJsonValueStart(rawText: string, keyStartIndex: number): number {
+  const colonIndex = rawText.indexOf(":", keyStartIndex);
+  if (colonIndex < 0) {
+    return -1;
+  }
+  for (let i = colonIndex + 1; i < rawText.length; i++) {
+    const ch = rawText[i];
+    if (!ch || ch === " " || ch === "\t" || ch === "\r" || ch === "\n") {
+      continue;
+    }
+    return i;
+  }
+  return -1;
+}
+
+function decodeJsonStringPrefix(rawText: string, startIndex: number): string {
+  let decoded = "";
+  for (let i = startIndex; i < rawText.length; i++) {
+    const ch = rawText[i];
+    if (!ch) {
+      continue;
+    }
+    if (ch === "\"") {
+      return decoded;
+    }
+    if (ch !== "\\") {
+      decoded += ch;
+      continue;
+    }
+
+    const escapeIndex = i + 1;
+    if (escapeIndex >= rawText.length) {
+      return decoded;
+    }
+    const escapedChar = rawText[escapeIndex];
+    if (!escapedChar) {
+      return decoded;
+    }
+
+    if (escapedChar === "u") {
+      const hexStart = escapeIndex + 1;
+      const hexEnd = hexStart + 4;
+      if (hexEnd > rawText.length) {
+        return decoded;
+      }
+      const hexValue = rawText.slice(hexStart, hexEnd);
+      if (!/^[\da-fA-F]{4}$/.test(hexValue)) {
+        return decoded;
+      }
+      decoded += String.fromCharCode(Number.parseInt(hexValue, 16));
+      i = hexEnd - 1;
+      continue;
+    }
+
+    switch (escapedChar) {
+      case "\"":
+      case "\\":
+      case "/":
+        decoded += escapedChar;
+        break;
+      case "b":
+        decoded += "\b";
+        break;
+      case "f":
+        decoded += "\f";
+        break;
+      case "n":
+        decoded += "\n";
+        break;
+      case "r":
+        decoded += "\r";
+        break;
+      case "t":
+        decoded += "\t";
+        break;
+      default:
+        decoded += escapedChar;
+        break;
+    }
+    i = escapeIndex;
+  }
+  return decoded;
 }
 
 function isRequestLikeSimulatedPayload(candidate: JsonObject): boolean {

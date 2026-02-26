@@ -123,6 +123,7 @@ const WrapperOptionsSchema = z.object({
         .array(z.string())
         .default(["People", "File", "Event", "Email", "TeamsMessage"]),
       earlyCompleteOnSimulatedPayload: z.boolean().default(false),
+      incrementalSimulatedContentStreaming: z.boolean().default(false),
     })
     .default({}),
   defaultModel: z.string().default("m365-copilot"),

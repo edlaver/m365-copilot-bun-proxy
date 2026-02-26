@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { tryExtractSimulatedResponsePayload } from "../src/proxy/openai";
+import {
+  tryExtractIncrementalSimulatedChatContent,
+  tryExtractSimulatedResponsePayload,
+} from "../src/proxy/openai";
 
 describe("tryExtractSimulatedResponsePayload", () => {
   test("prefers chat completion response JSON over echoed request JSON", () => {
@@ -80,5 +83,50 @@ describe("tryExtractSimulatedResponsePayload", () => {
       "chat.completions",
     );
     expect(extracted).toBeNull();
+  });
+});
+
+describe("tryExtractIncrementalSimulatedChatContent", () => {
+  test("extracts partial content from incomplete simulated chat completion JSON", () => {
+    const partial = [
+      "```json",
+      "{",
+      '  "id": "chatcmpl_test",',
+      '  "choices": [',
+      "    {",
+      '      "message": {',
+      '        "role": "assistant",',
+      '        "content": "hello\\nwor',
+    ].join("\n");
+
+    const extracted = tryExtractIncrementalSimulatedChatContent(partial);
+    expect(extracted.hasToolCalls).toBeFalse();
+    expect(extracted.content).toBe("hello\nwor");
+  });
+
+  test("suppresses incremental content when tool_calls appears before content", () => {
+    const partial = [
+      "```json",
+      "{",
+      '  "id": "chatcmpl_test",',
+      '  "choices": [',
+      "    {",
+      '      "message": {',
+      '        "role": "assistant",',
+      '        "tool_calls": [',
+      "          {",
+      '            "id": "call_1",',
+      '            "type": "function",',
+      "            \"function\": {",
+      '              "name": "attempt_completion",',
+      "              \"arguments\": \"{\\\"result\\\":\\\"x\\\"}\"",
+      "            }",
+      "          }",
+      "        ]",
+    ].join("\n");
+
+    const extracted = tryExtractIncrementalSimulatedChatContent(partial);
+    expect(extracted.hasToolCalls).toBeTrue();
+    expect(extracted.content).toBeNull();
   });
 });

@@ -122,13 +122,59 @@ describe("DebugMarkdownLogger substrate response logging", () => {
     expect(reasons.includes("complete_markdown_json")).toBeTrue();
     expect(reasons.includes("terminal")).toBeTrue();
   });
+
+  test("trace mode writes simulated streaming diagnostics", async () => {
+    const debugPath = mkdtempSync(path.join(tmpdir(), "proxy-logger-"));
+    tempDirs.push(debugPath);
+    const logger = new DebugMarkdownLogger(
+      createOptions(debugPath, LogLevels.Trace),
+      true,
+    );
+
+    await logger.logSimulatedStreamingDiagnostics({
+      completionId: "chatcmpl-test",
+      outcome: "completed",
+      parseAttemptCount: 3,
+      parseSuccessCount: 1,
+    });
+
+    const files = readdirSync(debugPath).filter((name) =>
+      name.endsWith("-simulated-streaming.md"),
+    );
+    expect(files.length).toBe(1);
+    const content = readFileSync(path.join(debugPath, files[0]), "utf8");
+    expect(content.includes("Simulated Streaming Diagnostics")).toBeTrue();
+    expect(content.includes("\"parseAttemptCount\": 3")).toBeTrue();
+  });
+
+  test("debug mode does not write simulated streaming diagnostics", async () => {
+    const debugPath = mkdtempSync(path.join(tmpdir(), "proxy-logger-"));
+    tempDirs.push(debugPath);
+    const logger = new DebugMarkdownLogger(
+      createOptions(debugPath, LogLevels.Debug),
+      true,
+    );
+
+    await logger.logSimulatedStreamingDiagnostics({
+      completionId: "chatcmpl-test",
+      outcome: "completed",
+    });
+
+    const files = readdirSync(debugPath).filter((name) =>
+      name.endsWith("-simulated-streaming.md"),
+    );
+    expect(files.length).toBe(0);
+  });
 });
 
-function createOptions(debugPath: string): WrapperOptions {
+function createOptions(
+  debugPath: string,
+  logLevel: (typeof LogLevels)[keyof typeof LogLevels] = LogLevels.Debug,
+): WrapperOptions {
   return {
     listenUrl: "http://localhost:4000",
     debugPath,
-    logLevel: LogLevels.Debug,
+    logLevel,
     openAiTransformMode: OpenAiTransformModes.Simulated,
     ignoreIncomingAuthorizationHeader: true,
     playwrightBrowser: "edge",

@@ -164,6 +164,7 @@ export type SubstrateOptions = {
   experienceType: string;
   entityAnnotationTypes: string[];
   earlyCompleteOnSimulatedPayload: boolean;
+  incrementalSimulatedContentStreaming?: boolean;
 };
 
 export type WrapperOptions = {

@@ -267,7 +267,110 @@ describe("simulated transform mode proxy flow", () => {
     expect(sawDone).toBeTrue();
   });
 
-  test("chat/completions stream in simulated mode retries toolless payload for tool-enabled requests", async () => {
+  test("chat/completions stream can emit incremental content before full JSON parse when enabled", async () => {
+    const finalContent = "hello from incremental simulated streaming";
+    const simulatedCompletion: JsonObject = {
+      id: "chatcmpl_simulated_stream_incremental",
+      object: "chat.completion",
+      created: 1700000000,
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: finalContent,
+          },
+          finish_reason: "stop",
+        },
+      ],
+    };
+    const markdownPayload = toMarkdownJson(simulatedCompletion);
+
+    const app = createProxyApp(
+      createSubstrateStreamingServices(
+        async (onStreamUpdate) => {
+          const step = 40;
+          for (let i = 0; i < markdownPayload.length; i += step) {
+            await onStreamUpdate({
+              deltaText: markdownPayload.slice(i, i + step),
+              conversationId: "conv_simulated_substrate_incremental",
+            });
+          }
+          return buildGraphChatResult(
+            "conv_simulated_substrate_incremental",
+            {},
+            markdownPayload,
+          );
+        },
+        () =>
+          buildGraphChatResult(
+            "conv_simulated_substrate_incremental",
+            {},
+            markdownPayload,
+          ),
+        (options) => {
+          options.substrate.incrementalSimulatedContentStreaming = true;
+        },
+      ),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Substrate,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: true,
+          messages: [{ role: "user", content: "Say hello." }],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).not.toBeNull();
+
+    const contentChunks: string[] = [];
+    let streamedText = "";
+    let sawDone = false;
+    for await (const event of readSseEvents(response.body!)) {
+      const data = event.data.trim();
+      if (!data) {
+        continue;
+      }
+      if (data.toLowerCase() === "[done]") {
+        sawDone = true;
+        break;
+      }
+      const chunk = tryParseJsonObject(data);
+      const choices = chunk?.choices;
+      if (!Array.isArray(choices) || choices.length === 0) {
+        continue;
+      }
+      const first = choices[0];
+      if (!first || typeof first !== "object" || Array.isArray(first)) {
+        continue;
+      }
+      const delta = (first as Record<string, unknown>).delta;
+      if (!delta || typeof delta !== "object" || Array.isArray(delta)) {
+        continue;
+      }
+      const content = (delta as Record<string, unknown>).content;
+      if (typeof content === "string" && content.length > 0) {
+        contentChunks.push(content);
+        streamedText += content;
+      }
+    }
+
+    expect(contentChunks.length).toBeGreaterThan(1);
+    expect(streamedText).toBe(finalContent);
+    expect(sawDone).toBeTrue();
+  });
+
+  test("chat/completions stream in simulated mode retries toolless payload for strict tool requests", async () => {
     const toollessPayload: JsonObject = {
       id: "chatcmpl_simulated_stream_toolless",
       object: "chat.completion",
@@ -362,7 +465,7 @@ describe("simulated transform mode proxy flow", () => {
               },
             },
           ],
-          tool_choice: "auto",
+          tool_choice: "required",
         }),
       }),
     );
@@ -409,6 +512,119 @@ describe("simulated transform mode proxy flow", () => {
 
     expect(sawToolDelta).toBeTrue();
     expect(finishReason).toBe("tool_calls");
+    expect(sawDone).toBeTrue();
+  });
+
+  test("chat/completions stream in simulated mode does not force retry for auto tool choice", async () => {
+    const toollessPayload: JsonObject = {
+      id: "chatcmpl_simulated_stream_auto_toolless",
+      object: "chat.completion",
+      created: 1700000000,
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "streamed text without forced tool call",
+          },
+          finish_reason: "stop",
+        },
+      ],
+    };
+
+    let chatCallCount = 0;
+    let chatStreamCallCount = 0;
+    const app = createProxyApp(
+      createSubstrateStreamingServices(async (onStreamUpdate) => {
+        chatStreamCallCount += 1;
+        await onStreamUpdate({
+          deltaText: toMarkdownJson(toollessPayload),
+          conversationId: "conv_simulated_substrate_auto_no_retry",
+        });
+        return buildGraphChatResult(
+          "conv_simulated_substrate_auto_no_retry",
+          {},
+          toMarkdownJson(toollessPayload),
+        );
+      }, () => {
+        chatCallCount += 1;
+        return buildGraphChatResult(
+          "conv_simulated_substrate_auto_no_retry",
+          {},
+          toMarkdownJson(toollessPayload),
+        );
+      }),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Substrate,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: true,
+          messages: [{ role: "user", content: "Summarize README." }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "read_file",
+                description: "Read a file",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    path: { type: "string" },
+                  },
+                  required: ["path"],
+                },
+              },
+            },
+          ],
+          tool_choice: "auto",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).not.toBeNull();
+    expect(chatStreamCallCount).toBe(1);
+    expect(chatCallCount).toBe(0);
+
+    let streamedText = "";
+    let sawDone = false;
+    for await (const event of readSseEvents(response.body!)) {
+      const data = event.data.trim();
+      if (!data) {
+        continue;
+      }
+      if (data.toLowerCase() === "[done]") {
+        sawDone = true;
+        break;
+      }
+      const chunk = tryParseJsonObject(data);
+      const choices = chunk?.choices;
+      if (!Array.isArray(choices) || choices.length === 0) {
+        continue;
+      }
+      const first = choices[0];
+      if (!first || typeof first !== "object" || Array.isArray(first)) {
+        continue;
+      }
+      const delta = (first as Record<string, unknown>).delta;
+      if (!delta || typeof delta !== "object" || Array.isArray(delta)) {
+        continue;
+      }
+      const content = (delta as Record<string, unknown>).content;
+      if (typeof content === "string") {
+        streamedText += content;
+      }
+    }
+
+    expect(streamedText).toContain("streamed text without forced tool call");
     expect(sawDone).toBeTrue();
   });
 
@@ -1298,9 +1514,13 @@ function createSubstrateStreamingServices(
     }) => Promise<void>,
   ) => Promise<ChatResult>,
   onChat: () => ChatResult,
+  configureOptions?: (options: WrapperOptions) => void,
 ): Parameters<typeof createProxyApp>[0] {
   const options = createOptions();
   options.transport = TransportNames.Substrate;
+  if (configureOptions) {
+    configureOptions(options);
+  }
   const conversationStore = new ConversationStore(options);
   const responseStore = new ResponseStore(options);
 

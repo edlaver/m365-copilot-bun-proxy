@@ -153,6 +153,25 @@ export class DebugMarkdownLogger {
     );
   }
 
+  async logSimulatedStreamingDiagnostics(details: JsonObject): Promise<void> {
+    if (
+      !this.isEnabled ||
+      !this.options.debugPath ||
+      !this.options.debugPath.trim() ||
+      !this.isLevelEnabled("trace")
+    ) {
+      return;
+    }
+
+    await this.logHttpLike(
+      "Simulated Streaming Diagnostics",
+      [],
+      [],
+      JSON.stringify(details),
+      "simulated-streaming",
+    );
+  }
+
   private buildStructuredSubstrateBody(
     direction: string,
     payload: string,
