@@ -803,6 +803,188 @@ describe("simulated transform mode proxy flow", () => {
     const functionNode = (toolCalls[0]?.function ?? {}) as JsonObject;
     expect(tryGetString(functionNode, "name")).toBe("write_to_file");
   });
+
+  test("chat/completions stream accepts toolless auto-tool payload after one retry", async () => {
+    const plainTextStopPayload: JsonObject = {
+      id: "chatcmpl-plain-stop-stream",
+      object: "chat.completion",
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "High-level summary: this proxy maps OpenAI-style traffic to M365 Copilot backends.",
+          },
+        },
+      ],
+    };
+
+    let callCount = 0;
+    const app = createProxyApp(
+      createServices((conversationId, payload) => {
+        callCount += 1;
+        return buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson(plainTextStopPayload),
+        );
+      }),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: true,
+          messages: [{ role: "user", content: "Explain the project." }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "ask_followup_question",
+                description: "Ask a follow-up question.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    question: { type: "string" },
+                  },
+                  required: ["question"],
+                },
+              },
+            },
+          ],
+          tool_choice: "auto",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(callCount).toBe(2);
+    expect(response.body).not.toBeNull();
+
+    let streamedText = "";
+    let sawDone = false;
+    for await (const event of readSseEvents(response.body!)) {
+      const data = event.data.trim();
+      if (!data) {
+        continue;
+      }
+      if (data.toLowerCase() === "[done]") {
+        sawDone = true;
+        break;
+      }
+      const chunk = tryParseJsonObject(data);
+      const choices = chunk?.choices;
+      if (!Array.isArray(choices) || choices.length === 0) {
+        continue;
+      }
+      const first = choices[0];
+      if (!first || typeof first !== "object" || Array.isArray(first)) {
+        continue;
+      }
+      const delta = (first as Record<string, unknown>).delta;
+      if (!delta || typeof delta !== "object" || Array.isArray(delta)) {
+        continue;
+      }
+      const content = (delta as Record<string, unknown>).content;
+      if (typeof content === "string") {
+        streamedText += content;
+      }
+    }
+
+    expect(streamedText).toContain("High-level summary");
+    expect(sawDone).toBeTrue();
+  });
+
+  test("chat/completions accepts second invalid apply_diff payload after retry", async () => {
+    const invalidApplyDiffPayload: JsonObject = {
+      id: "chatcmpl-invalid-applydiff-persistent",
+      object: "chat.completion",
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_apply_diff_bad_persistent",
+                type: "function",
+                function: {
+                  name: "apply_diff",
+                  arguments:
+                    "{\"path\":\"tests/agent-tests/fibonacci.ts\",\"diff\":\"<<<<<<< SEARCH\\n:start_line:1\\n-------\\n\\n=======\\nexport function fibonacci(n: number): number {\\n  if (n <= 1) return n;\\n  return n;\\n}\\n>>>>>>> REPLACE\"}",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    let callCount = 0;
+    const app = createProxyApp(
+      createServices((conversationId, payload) => {
+        callCount += 1;
+        return buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson(invalidApplyDiffPayload),
+        );
+      }),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: false,
+          messages: [{ role: "user", content: "Implement fibonacci." }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "apply_diff",
+                description: "Apply textual diff.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    path: { type: "string" },
+                    diff: { type: "string" },
+                  },
+                  required: ["path", "diff"],
+                },
+              },
+            },
+          ],
+          tool_choice: "auto",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(callCount).toBe(2);
+    const body = (await response.json()) as JsonObject;
+    const choices = body.choices as JsonObject[];
+    const message = choices[0]?.message as JsonObject;
+    const toolCalls = message.tool_calls as JsonObject[];
+    const functionNode = (toolCalls[0]?.function ?? {}) as JsonObject;
+    expect(tryGetString(functionNode, "name")).toBe("apply_diff");
+  });
 });
 
 function createServices(

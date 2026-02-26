@@ -396,13 +396,7 @@ async function handleChat(
 
         if (
           !normalizedSimulatedPayload ||
-          !hasUsableSimulatedChatCompletionPayload(normalizedSimulatedPayload) ||
-          shouldRetrySimulatedInvalidChatToolPayload(normalizedSimulatedPayload) ||
-          shouldRetrySimulatedToollessChatPayload(
-            options,
-            parsedRequest,
-            normalizedSimulatedPayload,
-          )
+          !hasUsableSimulatedChatCompletionPayload(normalizedSimulatedPayload)
         ) {
           return writeOpenAiError(
             services,
@@ -611,9 +605,7 @@ async function handleChat(
 
     if (
       !normalized ||
-      !hasUsableSimulatedChatCompletionPayload(normalized) ||
-      shouldRetrySimulatedInvalidChatToolPayload(normalized) ||
-      shouldRetrySimulatedToollessChatPayload(options, parsedRequest, normalized)
+      !hasUsableSimulatedChatCompletionPayload(normalized)
     ) {
       return writeOpenAiError(
         services,
@@ -981,15 +973,7 @@ async function handleResponsesCreate(
 
         if (
           !normalized ||
-          !hasUsableSimulatedResponsesPayload(normalized.responseBody) ||
-          shouldRetrySimulatedInvalidResponsesToolPayload(
-            normalized.responseBody,
-          ) ||
-          shouldRetrySimulatedToollessResponsesPayload(
-            options,
-            baseRequest,
-            normalized.responseBody,
-          )
+          !hasUsableSimulatedResponsesPayload(normalized.responseBody)
         ) {
           return writeOpenAiError(
             services,
@@ -1193,13 +1177,7 @@ async function handleResponsesCreate(
 
     if (
       !normalized ||
-      !hasUsableSimulatedResponsesPayload(normalized.responseBody) ||
-      shouldRetrySimulatedInvalidResponsesToolPayload(normalized.responseBody) ||
-      shouldRetrySimulatedToollessResponsesPayload(
-        options,
-        baseRequest,
-        normalized.responseBody,
-      )
+      !hasUsableSimulatedResponsesPayload(normalized.responseBody)
     ) {
       return writeOpenAiError(
         services,

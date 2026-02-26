@@ -14,6 +14,7 @@
   "chatOverStreamPathTemplate": "/beta/copilot/conversations/{conversationId}/chatOverStream",
   "substrate": {
     "hubPath": "wss://substrate.office.com/m365Copilot/Chathub",
+    "earlyCompleteOnSimulatedPayload": true,
     "source": "officeweb",
     "quoteSourceInQuery": true,
     "scenario": "OfficeWebIncludedCopilot",
@@ -63,7 +64,6 @@
     "invocationType": 4,
     "locale": "en-US",
     "experienceType": "Default",
-    "earlyCompleteOnSimulatedPayload": true,
     "entityAnnotationTypes": [
       "People",
       "File",
