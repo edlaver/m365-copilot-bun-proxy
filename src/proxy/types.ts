@@ -37,6 +37,17 @@ export const OpenAiTransformModes = {
   Mapped: "mapped",
 } as const;
 
+export const PlaywrightBrowsers = {
+  Edge: "edge",
+  Chrome: "chrome",
+  Chromium: "chromium",
+  Firefox: "firefox",
+  Webkit: "webkit",
+} as const;
+
+export type PlaywrightBrowser =
+  (typeof PlaywrightBrowsers)[keyof typeof PlaywrightBrowsers];
+
 export type ContextMessage = {
   text: string;
   description: string | null;
@@ -161,6 +172,7 @@ export type WrapperOptions = {
   logLevel: LogLevel;
   openAiTransformMode: string;
   ignoreIncomingAuthorizationHeader: boolean;
+  playwrightBrowser: PlaywrightBrowser;
   transport: string;
   graphBaseUrl: string;
   createConversationPath: string;

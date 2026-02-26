@@ -24,6 +24,7 @@ const conversationStore = new ConversationStore(options);
 const responseStore = new ResponseStore(options);
 const tokenProvider = new ProxyTokenProvider({
   ignoreIncomingAuthorizationHeader: options.ignoreIncomingAuthorizationHeader,
+  playwrightBrowser: options.playwrightBrowser,
 });
 
 const app = createProxyApp({

@@ -1,11 +1,23 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { chromium } from "playwright";
+import { chromium, firefox, webkit } from "playwright";
 
 const SUBSTRATE_WS_PATTERN = /substrate\.office\.com\/m365Copilot\/Chathub/i;
 const CHAT_URL = "https://m365.cloud.microsoft/chat/?auth=2";
 const CHAT_URL_GLOB = "**/chat/**";
 const LOGIN_HOST_PATTERN = /login\.(microsoftonline|live|microsoft)\.com/i;
+const CHROMIUM_LAUNCH_ARGS = [
+  "--no-first-run",
+  "--no-default-browser-check",
+  "--disable-search-engine-choice-screen",
+];
+const SUPPORTED_BROWSERS = new Set([
+  "edge",
+  "chrome",
+  "chromium",
+  "firefox",
+  "webkit",
+]);
 
 const TOKEN_TIMEOUT_MS = 120_000;
 const LOGIN_TIMEOUT_MS = 300_000;
@@ -13,19 +25,27 @@ const LOGIN_TIMEOUT_MS = 300_000;
 const parsed = parseArgs(process.argv.slice(2));
 const tokenPath = parsed["token-path"];
 const storageStatePath = parsed["storage-state-path"];
+const requestedBrowser = normalizeBrowserName(parsed.browser ?? "edge");
 
-if (!tokenPath || !storageStatePath) {
+if (!tokenPath || !storageStatePath || !requestedBrowser) {
+  const browserHelp = [...SUPPORTED_BROWSERS].join(", ");
   console.error(
-    "Missing required args: --token-path <path> --storage-state-path <path>",
+    `Missing or invalid args. Required: --token-path <path> --storage-state-path <path> [--browser <${browserHelp}>]`,
   );
   process.exit(2);
 }
 
-await fetchTokenWithPlaywrightNode(tokenPath, storageStatePath);
+await fetchTokenWithPlaywrightNode(tokenPath, storageStatePath, requestedBrowser);
 
-async function fetchTokenWithPlaywrightNode(tokenPath, storageStatePath) {
-  console.log("[playwright] Launching Chromium under Node.js (headed)...");
-  const browser = await launchBrowser();
+async function fetchTokenWithPlaywrightNode(
+  tokenPath,
+  storageStatePath,
+  browserName,
+) {
+  console.log(
+    `[playwright] Launching ${browserName} under Node.js (headed)...`,
+  );
+  const browser = await launchBrowser(browserName);
   const storageStateExists = await fileExists(storageStatePath);
   const context = await browser.newContext(
     storageStateExists ? { storageState: storageStatePath } : {},
@@ -98,27 +118,55 @@ async function fetchTokenWithPlaywrightNode(tokenPath, storageStatePath) {
   }
 }
 
-async function launchBrowser() {
-  try {
-    return await chromium.launch({
-      headless: false,
-      channel: "msedge",
-      args: [
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-search-engine-choice-screen",
-      ],
-    });
-  } catch {
-    // Fallback for environments without Edge channel support.
-    return chromium.launch({
-      headless: false,
-      args: [
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-search-engine-choice-screen",
-      ],
-    });
+async function launchBrowser(browserName) {
+  switch (browserName) {
+    case "edge":
+      try {
+        return await chromium.launch({
+          headless: false,
+          channel: "msedge",
+          args: CHROMIUM_LAUNCH_ARGS,
+        });
+      } catch {
+        console.log(
+          "[playwright] Edge channel unavailable, falling back to Chromium.",
+        );
+        return chromium.launch({
+          headless: false,
+          args: CHROMIUM_LAUNCH_ARGS,
+        });
+      }
+    case "chrome":
+      try {
+        return await chromium.launch({
+          headless: false,
+          channel: "chrome",
+          args: CHROMIUM_LAUNCH_ARGS,
+        });
+      } catch {
+        console.log(
+          "[playwright] Chrome channel unavailable, falling back to Chromium.",
+        );
+        return chromium.launch({
+          headless: false,
+          args: CHROMIUM_LAUNCH_ARGS,
+        });
+      }
+    case "chromium":
+      return chromium.launch({
+        headless: false,
+        args: CHROMIUM_LAUNCH_ARGS,
+      });
+    case "firefox":
+      return firefox.launch({
+        headless: false,
+      });
+    case "webkit":
+      return webkit.launch({
+        headless: false,
+      });
+    default:
+      throw new Error(`Unsupported browser: ${String(browserName)}`);
   }
 }
 
@@ -227,4 +275,16 @@ function parseArgs(args) {
     }
   }
   return options;
+}
+
+function normalizeBrowserName(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  const canonical = normalized === "msedge" ? "edge" : normalized;
+  return SUPPORTED_BROWSERS.has(canonical) ? canonical : null;
 }

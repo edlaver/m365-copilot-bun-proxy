@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   LogLevels,
   OpenAiTransformModes,
+  PlaywrightBrowsers,
   type JsonObject,
   type WrapperOptions,
 } from "./types";
@@ -25,6 +26,23 @@ const OpenAiTransformModeSchema = z.preprocess(
   z.enum([OpenAiTransformModes.Simulated, OpenAiTransformModes.Mapped]),
 );
 
+const PlaywrightBrowserSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") {
+      return value;
+    }
+    const normalized = value.trim().toLowerCase();
+    return normalized === "msedge" ? PlaywrightBrowsers.Edge : normalized;
+  },
+  z.enum([
+    PlaywrightBrowsers.Edge,
+    PlaywrightBrowsers.Chrome,
+    PlaywrightBrowsers.Chromium,
+    PlaywrightBrowsers.Firefox,
+    PlaywrightBrowsers.Webkit,
+  ]),
+);
+
 const WrapperOptionsSchema = z.object({
   listenUrl: z.string().default("http://localhost:4000"),
   debugPath: z.string().nullable().default("./Logs"),
@@ -33,6 +51,7 @@ const WrapperOptionsSchema = z.object({
     OpenAiTransformModes.Simulated,
   ),
   ignoreIncomingAuthorizationHeader: z.boolean().default(true),
+  playwrightBrowser: PlaywrightBrowserSchema.default(PlaywrightBrowsers.Edge),
   transport: z.string().default("graph"),
   graphBaseUrl: z.string().default("https://graph.microsoft.com"),
   createConversationPath: z.string().default("/beta/copilot/conversations"),

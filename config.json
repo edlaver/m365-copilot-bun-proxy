@@ -5,6 +5,7 @@
   "transport": "substrate",
   "openAiTransformMode": "simulated",
   "ignoreIncomingAuthorizationHeader": true,
+  "playwrightBrowser": "edge",
   "includeConversationIdInResponseBody": true,
   "retrySimulatedToollessResponses": true,
   "graphBaseUrl": "https://graph.microsoft.com",

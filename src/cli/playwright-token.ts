@@ -4,12 +4,21 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const NODE_RUNNER_FILENAME = "playwright-token.node.mjs";
+const DEFAULT_PLAYWRIGHT_BROWSER = "edge";
+
+export type PlaywrightBrowserName =
+  | "edge"
+  | "chrome"
+  | "chromium"
+  | "firefox"
+  | "webkit";
 
 export async function fetchTokenWithPlaywright(
   tokenPath: string,
   storageStatePath: string,
   options?: {
     quiet?: boolean;
+    browser?: PlaywrightBrowserName;
   },
 ): Promise<void> {
   const runnerPath = await resolveNodeRunnerPath();
@@ -17,6 +26,7 @@ export async function fetchTokenWithPlaywright(
     runnerPath,
     tokenPath,
     storageStatePath,
+    options?.browser ?? DEFAULT_PLAYWRIGHT_BROWSER,
     options?.quiet ?? false,
   );
 }
@@ -49,6 +59,7 @@ function runNodePlaywrightFetch(
   runnerPath: string,
   tokenPath: string,
   storageStatePath: string,
+  browser: PlaywrightBrowserName,
   quiet: boolean,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -60,6 +71,8 @@ function runNodePlaywrightFetch(
         tokenPath,
         "--storage-state-path",
         storageStatePath,
+        "--browser",
+        browser,
       ],
       {
         stdio: "pipe",

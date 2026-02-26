@@ -5,6 +5,7 @@ import {
   loadToken,
   type TokenState,
 } from "../cli/token-helpers";
+import { PlaywrightBrowsers, type PlaywrightBrowser } from "./types";
 import { normalizeBearerToken } from "./utils";
 
 const TOKEN_EXPIRY_SKEW_MS = 60_000;
@@ -13,13 +14,19 @@ export class ProxyTokenProvider {
   private readonly tokenPathPromise: Promise<string>;
   private readonly browserStatePathPromise: Promise<string>;
   private readonly ignoreIncomingAuthorizationHeader: boolean;
+  private readonly playwrightBrowser: PlaywrightBrowser;
   private inFlightAcquirePromise: Promise<string | null> | null = null;
 
-  constructor(options?: { ignoreIncomingAuthorizationHeader?: boolean }) {
+  constructor(options?: {
+    ignoreIncomingAuthorizationHeader?: boolean;
+    playwrightBrowser?: PlaywrightBrowser;
+  }) {
     this.tokenPathPromise = getTokenPath();
     this.browserStatePathPromise = getBrowserStatePath();
     this.ignoreIncomingAuthorizationHeader =
       options?.ignoreIncomingAuthorizationHeader ?? true;
+    this.playwrightBrowser =
+      options?.playwrightBrowser ?? PlaywrightBrowsers.Edge;
   }
 
   async resolveAuthorizationHeader(
@@ -72,6 +79,7 @@ export class ProxyTokenProvider {
     try {
       await fetchTokenWithPlaywright(tokenPath, browserStatePath, {
         quiet: true,
+        browser: this.playwrightBrowser,
       });
     } catch {
       return null;

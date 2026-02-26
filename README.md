@@ -52,6 +52,8 @@ Substrate settings are grouped under the `substrate` object in config (for examp
 
 `ignoreIncomingAuthorizationHeader` controls whether inbound `Authorization` headers are used by the proxy. Default is `true`, which makes the proxy ignore incoming auth and use cached/auto-fetched tokens instead.
 
+`playwrightBrowser` controls which Playwright browser is used when the proxy auto-acquires a token. Supported values: `edge` (default), `chrome`, `chromium`, `firefox`, `webkit` (`msedge` is also accepted as an alias for `edge`).
+
 `openAiTransformMode` controls how requests are translated for M365 Copilot:
 
 - `simulated` (default): sends the full incoming OpenAI JSON payload as a markdown JSON block and asks Copilot to respond in the same endpoint format; proxy extracts JSON from the response block and returns it.
@@ -63,6 +65,12 @@ You can override config values via env vars with the `CONFIG__` prefix, for exam
 
 ```bash
 CONFIG__listenUrl=http://localhost:4010 bun run start:proxy
+```
+
+Example: force automatic token acquisition to use Chrome instead of Edge:
+
+```bash
+CONFIG__playwrightBrowser=chrome bun run start:proxy
 ```
 
 To override nested values, use double underscores for each path segment, for example:
@@ -199,6 +207,8 @@ Streaming (`stream: true`) emits SSE events:
 - `error` (SSE error event on stream failure)
 
 By default, the proxy ignores inbound `Authorization` and attempts to use a cached token or auto-acquire one via Playwright for chat/responses requests.
+
+The browser used for that auto-acquisition is controlled by `playwrightBrowser` in config (or `CONFIG__playwrightBrowser` in env).
 
 To allow pass-through `Authorization` headers from clients, set:
 

@@ -748,6 +748,7 @@ function createOptions(): WrapperOptions {
     logLevel: LogLevels.Info,
     openAiTransformMode: OpenAiTransformModes.Simulated,
     ignoreIncomingAuthorizationHeader: true,
+    playwrightBrowser: "edge",
     transport: TransportNames.Graph,
     graphBaseUrl: "https://graph.microsoft.com",
     createConversationPath: "/beta/copilot/conversations",
