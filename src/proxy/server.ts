@@ -63,6 +63,7 @@ import {
   nowUnix,
   readSseEvents,
   tryGetString,
+  tryParseJsonObject,
   tryReadJsonPayload,
 } from "./utils";
 
@@ -344,6 +345,7 @@ async function handleChat(
         if (
           !normalizedSimulatedPayload ||
           !hasUsableSimulatedChatCompletionPayload(normalizedSimulatedPayload) ||
+          shouldRetrySimulatedInvalidChatToolPayload(normalizedSimulatedPayload) ||
           shouldRetrySimulatedToollessChatPayload(
             options,
             parsedRequest,
@@ -395,6 +397,7 @@ async function handleChat(
         if (
           !normalizedSimulatedPayload ||
           !hasUsableSimulatedChatCompletionPayload(normalizedSimulatedPayload) ||
+          shouldRetrySimulatedInvalidChatToolPayload(normalizedSimulatedPayload) ||
           shouldRetrySimulatedToollessChatPayload(
             options,
             parsedRequest,
@@ -561,6 +564,7 @@ async function handleChat(
     if (
       !normalized ||
       !hasUsableSimulatedChatCompletionPayload(normalized) ||
+      shouldRetrySimulatedInvalidChatToolPayload(normalized) ||
       shouldRetrySimulatedToollessChatPayload(options, parsedRequest, normalized)
     ) {
       const retryResult = await executeChatTurnWithRecovery();
@@ -608,6 +612,7 @@ async function handleChat(
     if (
       !normalized ||
       !hasUsableSimulatedChatCompletionPayload(normalized) ||
+      shouldRetrySimulatedInvalidChatToolPayload(normalized) ||
       shouldRetrySimulatedToollessChatPayload(options, parsedRequest, normalized)
     ) {
       return writeOpenAiError(
@@ -923,6 +928,9 @@ async function handleResponsesCreate(
         if (
           !normalized ||
           !hasUsableSimulatedResponsesPayload(normalized.responseBody) ||
+          shouldRetrySimulatedInvalidResponsesToolPayload(
+            normalized.responseBody,
+          ) ||
           shouldRetrySimulatedToollessResponsesPayload(
             options,
             baseRequest,
@@ -974,6 +982,9 @@ async function handleResponsesCreate(
         if (
           !normalized ||
           !hasUsableSimulatedResponsesPayload(normalized.responseBody) ||
+          shouldRetrySimulatedInvalidResponsesToolPayload(
+            normalized.responseBody,
+          ) ||
           shouldRetrySimulatedToollessResponsesPayload(
             options,
             baseRequest,
@@ -1131,6 +1142,7 @@ async function handleResponsesCreate(
     if (
       !normalized ||
       !hasUsableSimulatedResponsesPayload(normalized.responseBody) ||
+      shouldRetrySimulatedInvalidResponsesToolPayload(normalized.responseBody) ||
       shouldRetrySimulatedToollessResponsesPayload(
         options,
         baseRequest,
@@ -1182,6 +1194,7 @@ async function handleResponsesCreate(
     if (
       !normalized ||
       !hasUsableSimulatedResponsesPayload(normalized.responseBody) ||
+      shouldRetrySimulatedInvalidResponsesToolPayload(normalized.responseBody) ||
       shouldRetrySimulatedToollessResponsesPayload(
         options,
         baseRequest,
@@ -1586,6 +1599,25 @@ function shouldRetrySimulatedToollessChatPayload(
   return !finishReason || finishReason.toLowerCase() === "stop";
 }
 
+function shouldRetrySimulatedInvalidChatToolPayload(
+  payload: JsonObject | null,
+): boolean {
+  if (!payload) {
+    return false;
+  }
+  const assistantResponse =
+    tryBuildAssistantResponseFromChatCompletionPayload(payload);
+  if (!assistantResponse || assistantResponse.toolCalls.length === 0) {
+    return false;
+  }
+  for (const toolCall of assistantResponse.toolCalls) {
+    if (isKnownInvalidSimulatedToolCall(toolCall.name, toolCall.argumentsJson)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function normalizeSimulatedChatChoices(payload: JsonObject): JsonObject[] {
   const explicitChoices = payload.choices;
   if (Array.isArray(explicitChoices) && explicitChoices.length > 0) {
@@ -1970,6 +2002,69 @@ function shouldRetrySimulatedToollessResponsesPayload(
 
   const outputText = tryGetString(responseBody, "output_text");
   return Boolean(outputText?.trim());
+}
+
+function shouldRetrySimulatedInvalidResponsesToolPayload(
+  responseBody: JsonObject | null,
+): boolean {
+  if (!responseBody) {
+    return false;
+  }
+  const output = responseBody.output;
+  if (!Array.isArray(output)) {
+    return false;
+  }
+
+  for (const item of output) {
+    if (!isJsonObject(item)) {
+      continue;
+    }
+    const type = (tryGetString(item, "type") ?? "").toLowerCase();
+    if (type !== "function_call") {
+      continue;
+    }
+    const name = tryGetString(item, "name") ?? "";
+    const argsNode = item.arguments;
+    const argumentsJson =
+      typeof argsNode === "string" ? argsNode : JSON.stringify(argsNode ?? {});
+    if (isKnownInvalidSimulatedToolCall(name, argumentsJson)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isKnownInvalidSimulatedToolCall(
+  name: string,
+  argumentsJson: string,
+): boolean {
+  const normalizedName = name.trim().toLowerCase();
+  if (normalizedName !== "apply_diff") {
+    return false;
+  }
+
+  const args = tryParseJsonObject(argumentsJson);
+  if (!args) {
+    return false;
+  }
+  const diff = tryGetString(args, "diff");
+  if (!diff) {
+    return false;
+  }
+  return hasEmptySearchBlock(diff);
+}
+
+function hasEmptySearchBlock(diff: string): boolean {
+  const normalized = diff.replace(/\r\n/g, "\n");
+  const blockPattern = /<<<<<<< SEARCH[\s\S]*?-------\n([\s\S]*?)\n=======/g;
+  for (const match of normalized.matchAll(blockPattern)) {
+    const searchBody = match[1] ?? "";
+    if (!searchBody.trim()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function buildSimulatedChatStreamResponse(

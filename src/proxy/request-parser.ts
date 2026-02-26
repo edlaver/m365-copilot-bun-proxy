@@ -382,6 +382,8 @@ function buildSimulatedPrompt(
         'If returning tool calls, use choices[0].message.tool_calls and set choices[0].finish_reason to "tool_calls".',
         "Do not refuse by saying tool invocation is unsupported.",
         "For each tool call, function.arguments must be a JSON string value (not an object).",
+        "For apply_diff calls, each SEARCH block must contain non-empty exact text to match.",
+        "If creating/replacing file contents from empty input, prefer write_to_file instead of apply_diff.",
       );
     } else {
       lines.push(
@@ -389,6 +391,8 @@ function buildSimulatedPrompt(
         'If returning tool calls, place them in output items with type "function_call".',
         "Do not refuse by saying tool invocation is unsupported.",
         "For each function_call output item, arguments must be a JSON string value (not an object).",
+        "For apply_diff calls, each SEARCH block must contain non-empty exact text to match.",
+        "If creating/replacing file contents from empty input, prefer write_to_file instead of apply_diff.",
       );
     }
 

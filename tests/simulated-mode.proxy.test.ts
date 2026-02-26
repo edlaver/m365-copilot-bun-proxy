@@ -677,6 +677,132 @@ describe("simulated transform mode proxy flow", () => {
     expect(Array.isArray(toolCalls)).toBeTrue();
     expect(toolCalls.length).toBe(1);
   });
+
+  test("chat/completions retries once when first tool payload has empty apply_diff SEARCH", async () => {
+    const invalidApplyDiffPayload: JsonObject = {
+      id: "chatcmpl-invalid-applydiff",
+      object: "chat.completion",
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_apply_diff_bad",
+                type: "function",
+                function: {
+                  name: "apply_diff",
+                  arguments:
+                    "{\"path\":\"tests/agent-tests/fibonacci.ts\",\"diff\":\"<<<<<<< SEARCH\\n:start_line:1\\n-------\\n\\n=======\\nexport function fibonacci(n: number): number {\\n  if (n <= 1) return n;\\n  return n;\\n}\\n>>>>>>> REPLACE\"}",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const usablePayload: JsonObject = {
+      id: "chatcmpl-usable-write",
+      object: "chat.completion",
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_write_file_good",
+                type: "function",
+                function: {
+                  name: "write_to_file",
+                  arguments:
+                    "{\"path\":\"tests/agent-tests/fibonacci.ts\",\"content\":\"export function fibonacci(n: number): number {\\n  if (n <= 1) return n;\\n  return n;\\n}\"}",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    let callCount = 0;
+    const app = createProxyApp(
+      createServices((conversationId, payload) => {
+        callCount += 1;
+        return buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson(
+            callCount === 1 ? invalidApplyDiffPayload : usablePayload,
+          ),
+        );
+      }),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: false,
+          messages: [{ role: "user", content: "Implement fibonacci." }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "apply_diff",
+                description: "Apply textual diff.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    path: { type: "string" },
+                    diff: { type: "string" },
+                  },
+                  required: ["path", "diff"],
+                },
+              },
+            },
+            {
+              type: "function",
+              function: {
+                name: "write_to_file",
+                description: "Write file content.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    path: { type: "string" },
+                    content: { type: "string" },
+                  },
+                  required: ["path", "content"],
+                },
+              },
+            },
+          ],
+          tool_choice: "auto",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(callCount).toBe(2);
+    const body = (await response.json()) as JsonObject;
+    const choices = body.choices as JsonObject[];
+    const message = choices[0]?.message as JsonObject;
+    const toolCalls = message.tool_calls as JsonObject[];
+    const functionNode = (toolCalls[0]?.function ?? {}) as JsonObject;
+    expect(tryGetString(functionNode, "name")).toBe("write_to_file");
+  });
 });
 
 function createServices(
