@@ -2782,10 +2782,14 @@ async function streamSubstrateAsSimulatedOpenAi(
   const completionId = `chatcmpl-${randomUUID().replaceAll("-", "")}`;
   const created = nowUnix();
   let conversationId = initialConversationId;
+  let isStartOfSession = createdConversation;
   let streamInitialized = false;
   let emittedContent = "";
   let emittedToolCalls = false;
   let accumulatedAssistantText = "";
+  const shouldHoldForToolValidation =
+    parsedRequest.tooling.tools.length > 0 &&
+    parsedRequest.tooling.toolChoiceMode !== ToolChoiceModes.None;
 
   const stream = new ReadableStream<Uint8Array>({
     start: async (controller) => {
@@ -2842,7 +2846,10 @@ async function streamSubstrateAsSimulatedOpenAi(
         emittedContent += delta;
         writeChunk(null, delta, null);
       };
-      const tryEmitFromAccumulatedText = (): OpenAiAssistantResponse | null => {
+      const tryParseFromAccumulatedText = (): {
+        payload: JsonObject;
+        assistantResponse: OpenAiAssistantResponse;
+      } | null => {
         const simulatedPayload = tryExtractSimulatedResponsePayload(
           accumulatedAssistantText,
           "chat.completions",
@@ -2850,26 +2857,97 @@ async function streamSubstrateAsSimulatedOpenAi(
         if (!simulatedPayload) {
           return null;
         }
-        const normalizedPayload = normalizeSimulatedChatCompletionPayload(
+        const payload = normalizeSimulatedChatCompletionPayload(
           simulatedPayload,
           parsedRequest.model,
           conversationId,
           services.options.includeConversationIdInResponseBody,
         );
         const assistantResponse =
-          tryBuildAssistantResponseFromChatCompletionPayload(normalizedPayload);
+          tryBuildAssistantResponseFromChatCompletionPayload(payload);
         if (!assistantResponse) {
           return null;
         }
+        return { payload, assistantResponse };
+      };
+      const tryEmitFromAccumulatedText = (): {
+        payload: JsonObject;
+        assistantResponse: OpenAiAssistantResponse;
+      } | null => {
+        const parsed = tryParseFromAccumulatedText();
+        if (!parsed) {
+          return null;
+        }
+        if (shouldHoldForToolValidation) {
+          return parsed;
+        }
+        const { assistantResponse } = parsed;
         emitAssistantResponse(assistantResponse);
-        return assistantResponse;
+        return parsed;
+      };
+      const executeBufferedTurnWithRecovery = async (): Promise<ChatResult> => {
+        let result = await services.substrateClient.chat(
+          authorizationHeader,
+          conversationId,
+          parsedRequest,
+          isStartOfSession,
+        );
+        if (
+          shouldRetrySubstrateNoAssistantContent(
+            TransportNames.Substrate,
+            isStartOfSession,
+            result,
+          )
+        ) {
+          const createRetryConversation = services.substrateClient.createConversation();
+          if (createRetryConversation.isSuccess && createRetryConversation.conversationId) {
+            conversationId = createRetryConversation.conversationId;
+            isStartOfSession = true;
+            if (scopedConversationKey) {
+              services.conversationStore.set(scopedConversationKey, conversationId);
+            }
+            result = await services.substrateClient.chat(
+              authorizationHeader,
+              conversationId,
+              parsedRequest,
+              isStartOfSession,
+            );
+          }
+        }
+        if (result.conversationId) {
+          conversationId = result.conversationId;
+        }
+        return result;
+      };
+      const appendAssistantText = (
+        chatResult: ChatResult,
+        replace: boolean = false,
+      ): void => {
+        const latestAssistantText =
+          chatResult.assistantText ??
+          extractCopilotAssistantText(
+            chatResult.responseJson,
+            parsedRequest.promptText,
+          ) ??
+          "";
+        if (replace) {
+          accumulatedAssistantText = latestAssistantText;
+          return;
+        }
+        const trailingAssistantTextDelta = computeTrailingDelta(
+          accumulatedAssistantText,
+          latestAssistantText,
+        );
+        if (trailingAssistantTextDelta) {
+          accumulatedAssistantText += trailingAssistantTextDelta;
+        }
       };
 
-      const substrateResponse = await services.substrateClient.chatStream(
+      let substrateResponse = await services.substrateClient.chatStream(
         authorizationHeader,
         conversationId,
         parsedRequest,
-        createdConversation,
+        isStartOfSession,
         async (update) => {
           if (update.conversationId) {
             conversationId = update.conversationId;
@@ -2887,6 +2965,15 @@ async function streamSubstrateAsSimulatedOpenAi(
           tryEmitFromAccumulatedText();
         },
       );
+
+      if (!substrateResponse.isSuccess) {
+        if (!streamInitialized) {
+          const bufferedRetry = await executeBufferedTurnWithRecovery();
+          if (bufferedRetry.isSuccess) {
+            substrateResponse = bufferedRetry;
+          }
+        }
+      }
 
       if (!substrateResponse.isSuccess) {
         if (streamInitialized) {
@@ -2929,23 +3016,39 @@ async function streamSubstrateAsSimulatedOpenAi(
       if (substrateResponse.conversationId) {
         conversationId = substrateResponse.conversationId;
       }
-      const finalAssistantText =
-        substrateResponse.assistantText ??
-        extractCopilotAssistantText(
-          substrateResponse.responseJson,
-          parsedRequest.promptText,
-        ) ??
-        "";
-      const trailingAssistantTextDelta = computeTrailingDelta(
-        accumulatedAssistantText,
-        finalAssistantText,
-      );
-      if (trailingAssistantTextDelta) {
-        accumulatedAssistantText += trailingAssistantTextDelta;
+      appendAssistantText(substrateResponse);
+
+      let finalParsed = tryEmitFromAccumulatedText();
+      const shouldRetrySimulatedPayload =
+        finalParsed &&
+        (shouldRetrySimulatedInvalidChatToolPayload(finalParsed.payload) ||
+          shouldRetrySimulatedToollessChatPayload(
+            services.options,
+            parsedRequest,
+            finalParsed.payload,
+          ));
+      if (shouldRetrySimulatedPayload && !streamInitialized) {
+        const bufferedRetry = await executeBufferedTurnWithRecovery();
+        if (!bufferedRetry.isSuccess) {
+          const failure = await writeFromUpstreamFailure(
+            services,
+            bufferedRetry.statusCode,
+            bufferedRetry.rawBody,
+            "Substrate chat request failed.",
+            "substrate_error",
+          );
+          controller.enqueue(
+            encoder.encode(`event: error\ndata: ${await failure.text()}\n\n`),
+          );
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+          return;
+        }
+        appendAssistantText(bufferedRetry, true);
+        finalParsed = tryParseFromAccumulatedText();
       }
 
-      const finalAssistantResponse = tryEmitFromAccumulatedText();
-      if (!finalAssistantResponse) {
+      if (!finalParsed) {
         const message =
           "Simulated mode response did not include a usable assistant message or tool call payload.";
         if (streamInitialized) {
@@ -2968,8 +3071,9 @@ async function streamSubstrateAsSimulatedOpenAi(
         return;
       }
 
+      emitAssistantResponse(finalParsed.assistantResponse);
       ensureInitialized();
-      writeChunk(null, null, finalAssistantResponse.finishReason);
+      writeChunk(null, null, finalParsed.assistantResponse.finishReason);
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       controller.close();
     },

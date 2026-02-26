@@ -267,6 +267,151 @@ describe("simulated transform mode proxy flow", () => {
     expect(sawDone).toBeTrue();
   });
 
+  test("chat/completions stream in simulated mode retries toolless payload for tool-enabled requests", async () => {
+    const toollessPayload: JsonObject = {
+      id: "chatcmpl_simulated_stream_toolless",
+      object: "chat.completion",
+      created: 1700000000,
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "I can help with that.",
+          },
+          finish_reason: "stop",
+        },
+      ],
+    };
+    const toolPayload: JsonObject = {
+      id: "chatcmpl_simulated_stream_toolcall",
+      object: "chat.completion",
+      created: 1700000000,
+      model: "simulated-model",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_readme_1",
+                type: "function",
+                function: {
+                  name: "read_file",
+                  arguments: "{\"path\":\"README.md\"}",
+                },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    };
+
+    let chatCallCount = 0;
+    let chatStreamCallCount = 0;
+    const app = createProxyApp(
+      createSubstrateStreamingServices(async (onStreamUpdate) => {
+        chatStreamCallCount += 1;
+        await onStreamUpdate({
+          deltaText: toMarkdownJson(toollessPayload),
+          conversationId: "conv_simulated_substrate_retry",
+        });
+        return buildGraphChatResult(
+          "conv_simulated_substrate_retry",
+          {},
+          toMarkdownJson(toollessPayload),
+        );
+      }, () => {
+        chatCallCount += 1;
+        return buildGraphChatResult(
+          "conv_simulated_substrate_retry",
+          {},
+          toMarkdownJson(toolPayload),
+        );
+      }),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Substrate,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: true,
+          messages: [{ role: "user", content: "Read README." }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "read_file",
+                description: "Read a file",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    path: { type: "string" },
+                  },
+                  required: ["path"],
+                },
+              },
+            },
+          ],
+          tool_choice: "auto",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).not.toBeNull();
+    expect(chatStreamCallCount).toBe(1);
+    expect(chatCallCount).toBe(1);
+
+    let sawToolDelta = false;
+    let sawDone = false;
+    let finishReason: string | null = null;
+    for await (const event of readSseEvents(response.body!)) {
+      const data = event.data.trim();
+      if (!data) {
+        continue;
+      }
+      if (data.toLowerCase() === "[done]") {
+        sawDone = true;
+        break;
+      }
+      const chunk = tryParseJsonObject(data);
+      const choices = chunk?.choices;
+      if (!Array.isArray(choices) || choices.length === 0) {
+        continue;
+      }
+      const first = choices[0];
+      if (!first || typeof first !== "object" || Array.isArray(first)) {
+        continue;
+      }
+      const typed = first as Record<string, unknown>;
+      if (typeof typed.finish_reason === "string") {
+        finishReason = typed.finish_reason;
+      }
+      const delta = typed.delta;
+      if (!delta || typeof delta !== "object" || Array.isArray(delta)) {
+        continue;
+      }
+      const toolCalls = (delta as Record<string, unknown>).tool_calls;
+      if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+        sawToolDelta = true;
+      }
+    }
+
+    expect(sawToolDelta).toBeTrue();
+    expect(finishReason).toBe("tool_calls");
+    expect(sawDone).toBeTrue();
+  });
+
   test("responses non-stream returns simulated response payload object", async () => {
     const simulatedResponse: JsonObject = {
       id: "resp_simulated_1",
