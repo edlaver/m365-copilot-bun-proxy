@@ -1127,9 +1127,11 @@ describe("simulated transform mode proxy flow", () => {
     expect(response.body).not.toBeNull();
 
     const eventTypes: string[] = [];
+    const sseEventNames: string[] = [];
     let completedResponse: JsonObject | null = null;
     let sawDone = false;
     for await (const event of readSseEvents(response.body!)) {
+      sseEventNames.push(event.event);
       const data = event.data.trim();
       if (!data) {
         continue;
@@ -1155,6 +1157,9 @@ describe("simulated transform mode proxy flow", () => {
     expect(eventTypes).toContain("response.created");
     expect(eventTypes).toContain("response.in_progress");
     expect(eventTypes).toContain("response.completed");
+    expect(sseEventNames).toContain("response.created");
+    expect(sseEventNames).toContain("response.in_progress");
+    expect(sseEventNames).toContain("response.completed");
     expect(isJsonObject(completedResponse)).toBeTrue();
     const completed = completedResponse as JsonObject;
     expect(tryGetString(completed, "status")).toBe("completed");

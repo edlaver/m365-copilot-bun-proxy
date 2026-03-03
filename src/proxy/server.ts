@@ -1569,7 +1569,7 @@ async function buildSuppressedReplayResponsesResult(
     start(controller) {
       const encoder = new TextEncoder();
       const writeDataEvent = (event: JsonObject) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        enqueueSseJsonEvent(controller, encoder, event);
       };
 
       writeDataEvent(buildResponseCreatedEvent(inProgress));
@@ -1633,7 +1633,7 @@ async function buildBufferedResponsesStreamResponse(
     start(controller) {
       const encoder = new TextEncoder();
       const writeDataEvent = (event: JsonObject) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        enqueueSseJsonEvent(controller, encoder, event);
       };
       const writeError = (message: string, code: string) => {
         controller.enqueue(
@@ -2341,7 +2341,7 @@ async function buildSimulatedResponsesStreamResponse(
     start(controller) {
       const encoder = new TextEncoder();
       const writeDataEvent = (event: JsonObject) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        enqueueSseJsonEvent(controller, encoder, event);
       };
 
       const inProgress: JsonObject = {
@@ -2742,7 +2742,7 @@ async function transformGraphStreamToResponses(
     start: async (controller) => {
       const encoder = new TextEncoder();
       const writeDataEvent = (event: JsonObject) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        enqueueSseJsonEvent(controller, encoder, event);
       };
       const writeError = (message: string, code: string) => {
         controller.enqueue(
@@ -2887,7 +2887,7 @@ async function streamSubstrateAsResponses(
     start: async (controller) => {
       const encoder = new TextEncoder();
       const writeDataEvent = (event: JsonObject) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        enqueueSseJsonEvent(controller, encoder, event);
       };
       const writeError = (message: string, code: string) => {
         controller.enqueue(
@@ -3126,6 +3126,18 @@ async function writeFromUpstreamFailure(
     "api_error",
     errorCode,
   );
+}
+
+function enqueueSseJsonEvent(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  event: JsonObject,
+): void {
+  const eventName = tryGetString(event, "type");
+  if (eventName) {
+    controller.enqueue(encoder.encode(`event: ${eventName}\n`));
+  }
+  controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
 }
 
 async function buildAssistantStreamResponse(
