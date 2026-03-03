@@ -1000,7 +1000,7 @@ describe("simulated transform mode proxy flow", () => {
     expect(tryGetString(secondBody, "conversation")).toBe("conv_simulated_1");
     expect(tryGetString(secondBody, "conversation_id")).toBe("conv_simulated_1");
     expect(Array.isArray(secondBody.output)).toBeTrue();
-    expect((secondBody.output as unknown[]).length).toBe(0);
+    expect((secondBody.output as unknown[]).length).toBe(1);
     expect(tryGetString(secondBody, "output_text") ?? "").toBe("");
   });
 
@@ -1066,7 +1066,7 @@ describe("simulated transform mode proxy flow", () => {
       "conv_replay_guard_non_stream",
     );
     expect(Array.isArray(body.output)).toBeTrue();
-    expect((body.output as unknown[]).length).toBe(0);
+    expect((body.output as unknown[]).length).toBe(1);
     expect(tryGetString(body, "output_text") ?? "").toBe("");
   });
 
@@ -1165,7 +1165,7 @@ describe("simulated transform mode proxy flow", () => {
       "conv_replay_guard_stream",
     );
     expect(Array.isArray(completed.output)).toBeTrue();
-    expect((completed.output as unknown[]).length).toBe(0);
+    expect((completed.output as unknown[]).length).toBe(1);
     expect(tryGetString(completed, "output_text") ?? "").toBe("");
     expect(sawDone).toBeTrue();
   });
@@ -1217,7 +1217,7 @@ describe("simulated transform mode proxy flow", () => {
     const body = (await response.json()) as JsonObject;
     expect(tryGetString(body, "status")).toBe("completed");
     expect(Array.isArray(body.output)).toBeTrue();
-    expect((body.output as unknown[]).length).toBe(0);
+    expect((body.output as unknown[]).length).toBe(1);
     expect(tryGetString(body, "output_text") ?? "").toBe("");
   });
 

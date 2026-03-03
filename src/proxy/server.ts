@@ -1527,15 +1527,13 @@ async function buildSuppressedReplayResponsesResult(
     ? normalizedConversationId
     : null;
   const replayTextValue = replayText?.trim() ? replayText : null;
-  const outputItems = replayTextValue
-    ? [
-        buildMessageOutputItem(
-          createOpenAiOutputItemId("msg"),
-          replayTextValue,
-          "completed",
-        ),
-      ]
-    : [];
+  const outputItems = [
+    buildMessageOutputItem(
+      createOpenAiOutputItemId("msg"),
+      replayTextValue ?? "",
+      "completed",
+    ),
+  ];
   const inProgress = buildOpenAiResponseObject(
     responseId,
     createdAt,
