@@ -796,6 +796,98 @@ describe("simulated transform mode proxy flow", () => {
     expect(body.output_text).toBe("hello from role/content item");
   });
 
+  test("responses stream assigns unique proxy response ids per request", async () => {
+    const simulatedResponse: JsonObject = {
+      id: "resp_001",
+      object: "response",
+      model: "simulated-model",
+      output: [
+        {
+          id: "msg_simulated_fixed",
+          type: "message",
+          status: "completed",
+          role: "assistant",
+          content: [{ type: "output_text", text: "hi" }],
+        },
+      ],
+      output_text: "hi",
+      status: "completed",
+    };
+
+    const app = createProxyApp(
+      createServices((conversationId, payload) =>
+        buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson(simulatedResponse),
+        ),
+      ),
+    );
+
+    const collectResponseCreatedId = async (response: Response): Promise<string> => {
+      expect(response.status).toBe(200);
+      expect(response.body).not.toBeNull();
+      for await (const event of readSseEvents(response.body!)) {
+        const data = event.data.trim();
+        if (!data || data.toLowerCase() === "[done]") {
+          continue;
+        }
+        const parsed = tryParseJsonObject(data);
+        if (!parsed) {
+          continue;
+        }
+        if (tryGetString(parsed, "type") !== "response.created") {
+          continue;
+        }
+        if (!isJsonObject(parsed.response)) {
+          continue;
+        }
+        const id = tryGetString(parsed.response as JsonObject, "id");
+        if (id) {
+          return id;
+        }
+      }
+      throw new Error("missing response.created id");
+    };
+
+    const first = await app.fetch(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: true,
+          input: [{ role: "user", content: [{ type: "input_text", text: "A" }] }],
+        }),
+      }),
+    );
+    const second = await app.fetch(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: true,
+          input: [{ role: "user", content: [{ type: "input_text", text: "B" }] }],
+        }),
+      }),
+    );
+
+    const firstId = await collectResponseCreatedId(first);
+    const secondId = await collectResponseCreatedId(second);
+    expect(firstId).toContain("resp_");
+    expect(secondId).toContain("resp_");
+    expect(firstId).not.toBe("resp_001");
+    expect(secondId).not.toBe("resp_001");
+    expect(firstId).not.toBe(secondId);
+  });
+
   test("responses accepts spec conversation string input and returns spec conversation output", async () => {
     const app = createProxyApp(
       createServices((conversationId, payload) =>

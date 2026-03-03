@@ -2366,7 +2366,8 @@ async function buildSimulatedResponsesStreamResponse(
     includeConversationId,
   );
   const responseBody = normalized.responseBody;
-  const responseId = normalized.responseId;
+  const responseId = createOpenAiResponseId();
+  responseBody.id = responseId;
   const outputItems = Array.isArray(responseBody.output)
     ? responseBody.output.filter(isJsonObject)
     : [];
