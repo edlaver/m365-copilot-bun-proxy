@@ -172,6 +172,7 @@ export type WrapperOptions = {
   debugPath: string | null;
   logLevel: LogLevel;
   openAiTransformMode: string;
+  temporaryChat: boolean;
   ignoreIncomingAuthorizationHeader: boolean;
   playwrightBrowser: PlaywrightBrowser;
   transport: string;

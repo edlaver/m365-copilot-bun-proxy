@@ -176,6 +176,7 @@ function createOptions(
     debugPath,
     logLevel,
     openAiTransformMode: OpenAiTransformModes.Simulated,
+    temporaryChat: true,
     ignoreIncomingAuthorizationHeader: true,
     playwrightBrowser: "edge",
     transport: TransportNames.Substrate,

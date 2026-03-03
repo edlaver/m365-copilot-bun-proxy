@@ -54,6 +54,8 @@ Substrate settings are grouped under the `substrate` object in config (for examp
 
 `playwrightBrowser` controls which Playwright browser is used when the proxy auto-acquires a token. Supported values: `edge` (default), `chrome`, `chromium`, `firefox`, `webkit` (`msedge` is also accepted as an alias for `edge`).
 
+`temporaryChat` (default `true`) enables temporary-chat mode for Substrate by appending `disableMemory=1` to the websocket hub URL query string. This will prevent Copilot from showing your conversation history in the sidebar.
+
 `openAiTransformMode` controls how requests are translated for M365 Copilot:
 
 - `simulated` (default): sends the full incoming OpenAI JSON payload as a markdown JSON block and asks Copilot to respond in the same endpoint format; proxy extracts JSON from the response block and returns it.
@@ -268,4 +270,3 @@ In chat mode, the CLI supports these slash commands:
 - `/token` (paste a new token)
 - `/cleartoken` (clear cached token)
 - `/exit` (quit)
-

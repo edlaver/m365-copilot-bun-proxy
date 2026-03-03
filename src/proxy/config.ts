@@ -50,6 +50,7 @@ const WrapperOptionsSchema = z.object({
   openAiTransformMode: OpenAiTransformModeSchema.default(
     OpenAiTransformModes.Simulated,
   ),
+  temporaryChat: z.boolean().default(true),
   ignoreIncomingAuthorizationHeader: z.boolean().default(true),
   playwrightBrowser: PlaywrightBrowserSchema.default(PlaywrightBrowsers.Edge),
   transport: z.string().default("graph"),

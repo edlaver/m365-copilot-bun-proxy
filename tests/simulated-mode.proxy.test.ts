@@ -1588,6 +1588,7 @@ function createOptions(): WrapperOptions {
     debugPath: null,
     logLevel: LogLevels.Info,
     openAiTransformMode: OpenAiTransformModes.Simulated,
+    temporaryChat: true,
     ignoreIncomingAuthorizationHeader: true,
     playwrightBrowser: "edge",
     transport: TransportNames.Graph,

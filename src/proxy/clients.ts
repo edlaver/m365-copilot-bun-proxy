@@ -526,7 +526,7 @@ function buildFailure(statusCode: number, message: string): ChatResult {
   };
 }
 
-function buildSubstrateHubUri(
+export function buildSubstrateHubUri(
   options: WrapperOptions,
   objectId: string,
   tenantId: string,
@@ -576,6 +576,9 @@ function buildSubstrateHubUri(
   }
   if (options.substrate.variants?.trim()) {
     query.set("variants", options.substrate.variants);
+  }
+  if (options.temporaryChat) {
+    query.set("disableMemory", "1");
   }
 
   hubUri.search = query.toString();

@@ -4,6 +4,7 @@
   "logLevel": "trace",
   "transport": "substrate",
   "openAiTransformMode": "simulated",
+  "temporaryChat": true,
   "ignoreIncomingAuthorizationHeader": true,
   "playwrightBrowser": "edge",
   "includeConversationIdInResponseBody": true,
