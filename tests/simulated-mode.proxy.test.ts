@@ -17,6 +17,37 @@ import {
 import { readSseEvents, tryGetString, tryParseJsonObject } from "../src/proxy/utils";
 
 describe("simulated transform mode proxy flow", () => {
+  test("GET /v1/models returns all supported models", async () => {
+    const app = createProxyApp(
+      createServices((conversationId, payload) =>
+        buildGraphChatResult(conversationId, payload, "unused"),
+      ),
+    );
+
+    const response = await app.fetch(new Request("http://localhost/v1/models"));
+    const openAiResponse = await app.fetch(
+      new Request("http://localhost/openai/v1/models"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(openAiResponse.status).toBe(200);
+    const body = (await response.json()) as JsonObject;
+    const openAiBody = (await openAiResponse.json()) as JsonObject;
+    expect(tryGetString(body, "object")).toBe("list");
+    expect(openAiBody).toEqual(body);
+    const data = Array.isArray(body.data) ? (body.data as JsonObject[]) : [];
+    const ids = data.map((item) => tryGetString(item, "id"));
+    expect(ids).toEqual([
+      "m365-copilot-quick",
+      "m365-copilot-reasoning",
+      "m365-copilot-gpt5.2-quick",
+      "m365-copilot-gpt5.2-reasoning",
+      "m365-copilot",
+      "m365-copilot-auto",
+      "m365-copilot-magic",
+    ]);
+  });
+
   test("chat/completions non-stream wraps incoming JSON and returns parsed JSON block", async () => {
     const simulatedCompletion: JsonObject = {
       id: "chatcmpl_simulated_1",

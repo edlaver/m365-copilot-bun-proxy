@@ -617,6 +617,7 @@ function buildInvocationPayload(
 
   const argument: JsonObject = {
     source: options.substrate.source?.trim() || "officeweb",
+    tone: resolveSubstrateTone(request.model),
     clientCorrelationId: clientRequestId,
     sessionId,
     conversationId,
@@ -652,6 +653,26 @@ function buildInvocationPayload(
         ? options.substrate.invocationType
         : 1,
   };
+}
+
+export function resolveSubstrateTone(model: string | null | undefined): string {
+  const normalizedModel = model?.trim().toLowerCase() ?? "";
+  switch (normalizedModel) {
+    case "m365-copilot-quick":
+      return "Chat";
+    case "m365-copilot-reasoning":
+      return "Reasoning";
+    case "m365-copilot-gpt5.2-quick":
+      return "Gpt_5_2_Chat";
+    case "m365-copilot-gpt5.2-reasoning":
+      return "Gpt_5_2_Reasoning";
+    case "m365-copilot":
+    case "m365-copilot-auto":
+    case "m365-copilot-magic":
+      return "magic";
+    default:
+      return "magic";
+  }
 }
 
 function buildPromptWithAdditionalContext(

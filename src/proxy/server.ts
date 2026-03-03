@@ -78,26 +78,22 @@ type Services = {
   tokenProvider: ProxyTokenProvider;
 };
 
+const AvailableModelIds = [
+  "m365-copilot-quick",
+  "m365-copilot-reasoning",
+  "m365-copilot-gpt5.2-quick",
+  "m365-copilot-gpt5.2-reasoning",
+  "m365-copilot",
+  "m365-copilot-auto",
+  "m365-copilot-magic",
+] as const;
+
 export function createProxyApp(services: Services): Hono {
   const app = new Hono();
-  const { options } = services;
 
   app.get("/healthz", (c) => c.json({ status: "ok" }));
-  app.get("/v1/models", (c) =>
-    c.json({
-      object: "list",
-      data: [
-        {
-          id: options.defaultModel?.trim()
-            ? options.defaultModel
-            : "m365-copilot",
-          object: "model",
-          created: 0,
-          owned_by: "microsoft-365-copilot",
-        },
-      ],
-    }),
-  );
+  app.get("/v1/models", (c) => c.json(buildModelsResponse()));
+  app.get("/openai/v1/models", (c) => c.json(buildModelsResponse()));
 
   app.post("/v1/chat/completions", (c) => handleChat(c.req.raw, services));
   app.post("/openai/v1/chat/completions", (c) =>
@@ -124,6 +120,18 @@ export function createProxyApp(services: Services): Hono {
     handleResponsesDelete(c.req.raw, services, c.req.param("responseId")),
   );
   return app;
+}
+
+function buildModelsResponse(): JsonObject {
+  return {
+    object: "list",
+    data: AvailableModelIds.map((id) => ({
+      id,
+      object: "model",
+      created: 0,
+      owned_by: "microsoft-365-copilot",
+    })),
+  };
 }
 
 async function handleChat(

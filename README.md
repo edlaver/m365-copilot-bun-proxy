@@ -109,6 +109,8 @@ CONFIG__substrate__hubPath=wss://substrate.office.com/m365Copilot/Chathub bun ru
 
 - `POST /v1/chat/completions`
 - `POST /openai/v1/chat/completions`
+- `GET /v1/models`
+- `GET /openai/v1/models`
 - `POST /v1/responses`
 - `POST /openai/v1/responses`
 - `GET /v1/responses`
@@ -117,6 +119,34 @@ CONFIG__substrate__hubPath=wss://substrate.office.com/m365Copilot/Chathub bun ru
 - `GET /openai/v1/responses/{response_id}`
 - `DELETE /v1/responses/{response_id}`
 - `DELETE /openai/v1/responses/{response_id}`
+
+## Available models
+
+The proxy accepts any OpenAI-compatible `model` string, but for Substrate transport it maps known model IDs to a `tone` value in the outgoing websocket invocation payload.
+
+`tone` is the Copilot UI option to pick a model type, out of:
+
+- "Auto" => `magic`
+- "Quick Response" => `Chat`
+- "Think Deeper" => `Reasoning`
+- "GPT5.2 Quick" => `Gpt_5_2_Chat`
+- "GPT5.2 Think deeper" => `Gpt_5_2_Reasoning`
+
+Model to Substrate `tone` mapping:
+
+- `m365-copilot` -> `magic`
+- `m365-copilot-auto` -> `magic`
+- `m365-copilot-magic` -> `magic`
+- Any unknown model value -> `magic`
+- `m365-copilot-quick` -> `Chat`
+- `m365-copilot-reasoning` -> `Reasoning`
+- `m365-copilot-gpt5.2-quick` -> `Gpt_5_2_Chat`
+- `m365-copilot-gpt5.2-reasoning` -> `Gpt_5_2_Reasoning`
+
+Notes:
+
+- If `model` is omitted, the proxy uses `defaultModel` from config (defaults to `m365-copilot`).
+- `GET /v1/models` (and `GET /openai/v1/models`) returns the full supported model list above.
 
 ## Chat Completions Tool Calling
 
