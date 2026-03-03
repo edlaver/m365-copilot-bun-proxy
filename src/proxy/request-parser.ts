@@ -82,9 +82,11 @@ export function selectConversation(
   conversationKey: string | null;
   forceNewConversation: boolean;
 } {
+  const specConversationId = extractSpecConversationId(requestJson);
   const conversationId = normalizeNullableString(
     firstNonEmpty(
       request.headers.get("x-m365-conversation-id"),
+      specConversationId,
       tryGetString(requestJson, "m365_conversation_id"),
       tryGetString(requestJson, "conversation_id"),
     ),
@@ -109,6 +111,17 @@ export function selectConversation(
     conversationKey,
     forceNewConversation: forceNewFromHeader || forceNewFromBody,
   };
+}
+
+function extractSpecConversationId(requestJson: JsonObject): string | null {
+  const conversation = requestJson.conversation;
+  if (typeof conversation === "string") {
+    return conversation;
+  }
+  if (!isJsonObject(conversation)) {
+    return null;
+  }
+  return tryGetString(conversation, "id");
 }
 
 export function scopeConversationKey(
@@ -271,6 +284,16 @@ export function tryParseResponsesRequest(
 ):
   | { ok: true; request: ParsedResponsesRequest }
   | { ok: false; error: string } {
+  const previousResponseId = tryGetString(requestJson, "previous_response_id");
+  const specConversationId = extractSpecConversationId(requestJson);
+  if (previousResponseId && specConversationId) {
+    return {
+      ok: false,
+      error:
+        "The 'conversation' field cannot be used together with 'previous_response_id'.",
+    };
+  }
+
   const transformMode = normalizeOpenAiTransformMode(options.openAiTransformMode);
   if (transformMode === OpenAiTransformModes.Simulated) {
     const normalizedInput = normalizeResponsesInput(requestJson.input);
@@ -278,7 +301,7 @@ export function tryParseResponsesRequest(
       ok: true,
       request: {
         base: buildSimulatedOpenAiRequest(requestJson, options, "responses"),
-        previousResponseId: tryGetString(requestJson, "previous_response_id"),
+        previousResponseId,
         inputItemsForStorage: normalizedInput.inputItemsForStorage,
         instructions: tryGetString(requestJson, "instructions"),
       },
@@ -325,7 +348,7 @@ export function tryParseResponsesRequest(
     ok: true,
     request: {
       base: parsedBase.request,
-      previousResponseId: tryGetString(requestJson, "previous_response_id"),
+      previousResponseId,
       inputItemsForStorage: normalizedInput.inputItemsForStorage,
       instructions,
     },

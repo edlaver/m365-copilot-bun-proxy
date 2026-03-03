@@ -844,10 +844,28 @@ function extractResponsesConversationId(rawChunk: string): string | null {
   if (!response || typeof response !== "object" || Array.isArray(response)) {
     return null;
   }
-  const conversationId = (response as Record<string, unknown>).conversation_id;
-  return typeof conversationId === "string" && conversationId.trim()
-    ? conversationId.trim()
-    : null;
+  const typed = response as Record<string, unknown>;
+  const directConversationId = typed.conversation_id;
+  if (
+    typeof directConversationId === "string" &&
+    directConversationId.trim()
+  ) {
+    return directConversationId.trim();
+  }
+  const conversation = typed.conversation;
+  if (typeof conversation === "string" && conversation.trim()) {
+    return conversation.trim();
+  }
+  if (conversation && typeof conversation === "object" && !Array.isArray(conversation)) {
+    const nestedConversationId = (conversation as Record<string, unknown>).id;
+    if (
+      typeof nestedConversationId === "string" &&
+      nestedConversationId.trim()
+    ) {
+      return nestedConversationId.trim();
+    }
+  }
+  return null;
 }
 
 function extractErrorMessage(rawJson: string): string | null {

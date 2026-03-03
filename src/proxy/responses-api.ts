@@ -77,6 +77,7 @@ export function buildOpenAiResponseObject(
     response.input = cloneJsonValue(parsedRequest.inputItemsForStorage);
   }
   if (conversationId?.trim()) {
+    response.conversation = conversationId;
     response.conversation_id = conversationId;
   }
 

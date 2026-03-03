@@ -2014,6 +2014,7 @@ function normalizeSimulatedResponsesPayload(
     );
   }
   if (includeConversationId) {
+    responseBody.conversation = conversationId;
     responseBody.conversation_id = conversationId;
   }
 

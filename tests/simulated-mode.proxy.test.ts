@@ -796,6 +796,141 @@ describe("simulated transform mode proxy flow", () => {
     expect(body.output_text).toBe("hello from role/content item");
   });
 
+  test("responses accepts spec conversation string input and returns spec conversation output", async () => {
+    const app = createProxyApp(
+      createServices((conversationId, payload) =>
+        buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson({
+            id: "resp_spec_conversation_string",
+            object: "response",
+            created_at: 1700000000,
+            status: "completed",
+            model: "simulated-model",
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "hello from conversation string" }],
+              },
+            ],
+            output_text: "hello from conversation string",
+          }),
+        ),
+      ),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: false,
+          conversation: "conv_spec_string_1",
+          input: "Say hello.",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-m365-conversation-id")).toBe("conv_spec_string_1");
+    const body = (await response.json()) as JsonObject;
+    expect(tryGetString(body, "conversation")).toBe("conv_spec_string_1");
+    expect(tryGetString(body, "conversation_id")).toBe("conv_spec_string_1");
+  });
+
+  test("responses accepts spec conversation object input", async () => {
+    const app = createProxyApp(
+      createServices((conversationId, payload) =>
+        buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson({
+            id: "resp_spec_conversation_object",
+            object: "response",
+            created_at: 1700000000,
+            status: "completed",
+            model: "simulated-model",
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "hello from conversation object" }],
+              },
+            ],
+            output_text: "hello from conversation object",
+          }),
+        ),
+      ),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: false,
+          conversation: { id: "conv_spec_object_1" },
+          input: "Say hello.",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-m365-conversation-id")).toBe("conv_spec_object_1");
+    const body = (await response.json()) as JsonObject;
+    expect(tryGetString(body, "conversation")).toBe("conv_spec_object_1");
+    expect(tryGetString(body, "conversation_id")).toBe("conv_spec_object_1");
+  });
+
+  test("responses rejects conversation combined with previous_response_id", async () => {
+    const app = createProxyApp(
+      createServices((conversationId, payload) =>
+        buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson({
+            id: "resp_unused",
+            object: "response",
+            output: [],
+            output_text: "",
+          }),
+        ),
+      ),
+    );
+
+    const response = await app.fetch(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: false,
+          conversation: "conv_spec_string_2",
+          previous_response_id: "resp_prev_1",
+          input: "Say hello.",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as JsonObject;
+    expect(isJsonObject(body.error)).toBeTrue();
+    expect(tryGetString(body.error as JsonObject, "code")).toBe("invalid_request");
+  });
+
   test("responses request-hash guard suppresses duplicate identical requests", async () => {
     let chatCallCount = 0;
     const app = createProxyApp(
