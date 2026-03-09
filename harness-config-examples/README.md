@@ -1,0 +1,1 @@
+This folder contains example configuration files for different agent harnesses to use the M365 Copilot Bun Proxy. These examples can be used as a starting point for setting up your own configuration. Each file is named according to its harness, and you can modify the settings as needed to fit your specific use case.

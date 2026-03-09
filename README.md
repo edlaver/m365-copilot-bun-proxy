@@ -15,6 +15,13 @@ TypeScript/Bun port of the original M365 Copilot Bun Proxy .NET proxy + CLI.
 bun install
 ```
 
+## Harness config examples
+
+Example harness configuration files live in `harness-config-examples/`.
+
+- `harness-config-examples/opencode.jsonc` provides a ready-to-use OpenCode config wired to this proxy on `http://localhost:4000/v1/`.
+- Copy and adapt these examples for your local harness setup.
+
 ## Run proxy
 
 ```bash

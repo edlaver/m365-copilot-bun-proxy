@@ -1,0 +1,87 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": true,
+  //// Note: You can set the default model for OpenCode by toggling the
+  ////  desired line below. Make sure to choose a model that is enabled in
+  //// the "enabled_providers" section below.
+  //// This is useful to quickly switch between completions and responses for testing.
+  //// "model": "m365-copilot-bun-proxy-completions/m365-copilot-auto"
+  "model": "m365-copilot-bun-proxy-responses/m365-copilot-auto",
+  ////
+  "enabled_providers": [
+    "m365-copilot-bun-proxy-completions",
+    "m365-copilot-bun-proxy-responses"
+  ],
+  "provider": {
+    "m365-copilot-bun-proxy-completions": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "m365-copilot-bun-proxy (Completions)",
+      "options": {
+        "baseURL": "http://localhost:4000/v1/",
+        "apiKey": "ignore"
+      },
+      "models": {
+        "m365-copilot-auto": {
+          "name": "M365 Copilot (Auto | Completions)",
+          "tool_call": true,
+          "reasoning": false
+        },
+        "m365-copilot-quick": {
+          "name": "M365 Copilot (Quick | Completions)",
+          "tool_call": true,
+          "reasoning": false
+        },
+        "m365-copilot-reasoning": {
+          "name": "M365 Copilot (Reasoning | Completions)",
+          "tool_call": true,
+          "reasoning": true
+        },
+        "m365-copilot-gpt5.2-quick": {
+          "name": "M365 Copilot GPT-5.2 (Quick | Completions)",
+          "tool_call": true,
+          "reasoning": false
+        },
+        "m365-copilot-gpt5.2-reasoning": {
+          "name": "M365 Copilot GPT-5.2 (Reasoning | Completions)",
+          "tool_call": true,
+          "reasoning": true
+        }
+      }
+    },
+    "m365-copilot-bun-proxy-responses": {
+      "npm": "@ai-sdk/openai",
+      "name": "m365-copilot-bun-proxy (Responses)",
+      "options": {
+        "baseURL": "http://localhost:4000/v1/",
+        "apiKey": "ignore"
+      },
+      "models": {
+        "m365-copilot-auto": {
+          "name": "M365 Copilot (Auto | Responses)",
+          "tool_call": true,
+          "reasoning": false
+        },
+        "m365-copilot-quick": {
+          "name": "M365 Copilot (Quick | Responses)",
+          "tool_call": true,
+          "reasoning": false
+        },
+        "m365-copilot-reasoning": {
+          "name": "M365 Copilot (Reasoning | Responses)",
+          "tool_call": true,
+          "reasoning": true
+        },
+        "m365-copilot-gpt5.2-quick": {
+          "name": "M365 Copilot GPT-5.2 (Quick | Responses)",
+          "tool_call": true,
+          "reasoning": false
+        },
+        "m365-copilot-gpt5.2-reasoning": {
+          "name": "M365 Copilot GPT-5.2 (Reasoning | Responses)",
+          "tool_call": true,
+          "reasoning": true
+        }
+      }
+    }
+  }
+}
