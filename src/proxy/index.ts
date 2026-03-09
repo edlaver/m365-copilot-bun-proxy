@@ -43,6 +43,7 @@ const debugLogPath =
     ? path.resolve(options.debugPath)
     : null;
 const server = Bun.serve({
+  idleTimeout: 0, // Disable idle timeout to allow long-running requests
   hostname: listen.hostname,
   port: listen.port,
   fetch: app.fetch,
