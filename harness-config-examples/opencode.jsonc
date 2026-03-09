@@ -5,8 +5,8 @@
   ////  desired line below. Make sure to choose a model that is enabled in
   //// the "enabled_providers" section below.
   //// This is useful to quickly switch between completions and responses for testing.
-  //// "model": "m365-copilot-bun-proxy-completions/m365-copilot-auto"
-  "model": "m365-copilot-bun-proxy-responses/m365-copilot-auto",
+  "model": "m365-copilot-bun-proxy-completions/m365-copilot-auto",
+  //"model": "m365-copilot-bun-proxy-responses/m365-copilot-auto",
   ////
   "enabled_providers": [
     "m365-copilot-bun-proxy-completions",
