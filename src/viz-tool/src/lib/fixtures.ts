@@ -73,8 +73,12 @@ export type TraceResponse = {
   requestType: string
   transformMode: string
   transport: string
+  proxyStatusCode: number | null
+  upstreamStatusCode: number | null
   pane2: unknown
   pane3: unknown
   pane4: unknown
   error: unknown
+  createdAtUnix: number
+  updatedAtUnix: number
 }

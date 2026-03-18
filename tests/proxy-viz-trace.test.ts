@@ -328,6 +328,106 @@ describe("proxy viz trace capture", () => {
     expect((trace.pane3 as JsonObject).type).toBe("substrate-request");
     expect((trace.pane4 as JsonObject).streamType).toBe("signalr");
   });
+
+  test("publishes live substrate trace updates before the request completes", async () => {
+    const releaseResponse = createDeferred<void>();
+    const liveUpdateReady = createDeferred<void>();
+    const conversationId = "substrate-live-1";
+    const app = createTestApp({
+      options: createOptions({ transport: TransportNames.Substrate }),
+      substrateClient: {
+        chat: async (
+          _authorizationHeader: string,
+          currentConversationId: string,
+          _request: ParsedOpenAiRequest,
+          _isStartOfSession: boolean,
+          onStreamUpdate?: (update: {
+            deltaText: string | null;
+            conversationId: string | null;
+            upstreamRequestPayload?: JsonObject | null;
+            upstreamResponsePayload?: JsonObject | null;
+          }) => Promise<void>,
+        ): Promise<ChatResult> => {
+          await onStreamUpdate?.({
+            deltaText: null,
+            conversationId: currentConversationId,
+            upstreamRequestPayload: {
+              type: "substrate-request",
+              conversationId: currentConversationId,
+            },
+            upstreamResponsePayload: {
+              streamType: "signalr",
+              frameCount: 1,
+              frames: [{ type: 1, payload: "handshake" }],
+            },
+          });
+          liveUpdateReady.resolve();
+          await releaseResponse.promise;
+          return {
+            isSuccess: true,
+            statusCode: 200,
+            responseJson: {
+              id: currentConversationId,
+              messages: [{ text: "Say hello." }, { text: "hello world" }],
+            },
+            rawBody: "{}",
+            assistantText: "hello world",
+            conversationId: currentConversationId,
+            upstreamRequestPayload: {
+              type: "substrate-request",
+              conversationId: currentConversationId,
+            },
+            upstreamResponsePayload: {
+              streamType: "signalr",
+              frameCount: 2,
+              frames: [
+                { type: 1, payload: "handshake" },
+                { type: 2, payload: "hello world" },
+              ],
+            },
+          };
+        },
+      },
+    });
+
+    const traceId = "trace-substrate-live";
+    const responsePromise = app.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer test",
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Substrate,
+          "x-m365-viz-trace-id": traceId,
+          "x-m365-openai-transform-mode": OpenAiTransformModes.Mapped,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          messages: [{ role: "user", content: "Say hello." }],
+        }),
+      }),
+    );
+
+    await liveUpdateReady.promise;
+
+    const pendingTrace = await getTrace(app, traceId);
+    expect(pendingTrace.status).toBe("pending");
+    expect((pendingTrace.pane3 as JsonObject).type).toBe("substrate-request");
+    expect((pendingTrace.pane4 as JsonObject).frameCount).toBe(1);
+
+    releaseResponse.resolve();
+
+    const response = await responsePromise;
+    expect(response.status).toBe(200);
+    await response.json();
+
+    const completedTrace = await getTrace(app, traceId);
+    expect(completedTrace.status).toBe("completed");
+    expect((completedTrace.pane4 as JsonObject).frameCount).toBe(2);
+    expect((completedTrace.pane2 as JsonObject).object).toBe("chat.completion");
+    expect(((completedTrace.pane2 as JsonObject).choices as JsonObject[])[0]).toBeDefined();
+    expect(conversationId).toBe("substrate-live-1");
+  });
 });
 
 function createTestApp(overrides: {
@@ -533,4 +633,18 @@ function buildGraphStreamResponse(
       "content-type": "text/event-stream",
     },
   });
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return {
+    promise,
+    resolve,
+    reject,
+  };
 }

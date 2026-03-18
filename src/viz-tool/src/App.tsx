@@ -60,13 +60,43 @@ export function App() {
     setPane1(selectedFixture.content)
   }, [selectedFixtureId, selectedFixture])
 
+  useEffect(() => {
+    setPane4(formatJson(filterPane4Data(pane4Data, selectedPane4FrameTypes)))
+  }, [pane4Data, selectedPane4FrameTypes])
+
+  function applyTrace(trace: TraceResponse, responseStatus: number | null) {
+    if (trace.pane2 !== null) {
+      setPane2(formatJson(trace.pane2))
+    } else if (trace.error !== null) {
+      setPane2(formatJson(trace.error))
+    } else if (trace.status !== "pending") {
+      setPane2(formatJson({ status: trace.status }))
+    }
+
+    if (trace.pane3 !== null) {
+      setPane3(formatJson(trace.pane3))
+    } else if (trace.status !== "pending") {
+      setPane3(formatJson({ note: "No transformed upstream request was captured." }))
+    }
+
+    if (trace.pane4 !== null) {
+      setPane4Data(trace.pane4)
+    } else if (trace.status !== "pending") {
+      setPane4Data({ note: "No upstream response was captured." })
+    }
+
+    setStatusText(buildTraceStatusText(trace, responseStatus))
+    if (trace.error !== null) {
+      setErrorText(formatInline(trace.error))
+    }
+  }
+
   async function handleSubmit() {
     setErrorText(null)
     setIsSubmitting(true)
     setStatusText("Submitting request")
     setPane2(emptyPaneText)
     setPane3(emptyPaneText)
-    setPane4(emptyPaneText)
     setPane4Data(null)
     setSelectedPane4FrameTypes([2])
 
@@ -89,7 +119,10 @@ export function App() {
         : "/v1/responses"
 
     let responseText = ""
-    let responseStatus = 0
+    let responseStatus: number | null = null
+    const tracePromise = waitForTrace(traceId, requestController.signal, (trace) => {
+      applyTrace(trace, responseStatus)
+    })
     try {
       const response = await fetchWithProxyRetry(endpoint, {
         method: "POST",
@@ -104,39 +137,30 @@ export function App() {
       responseStatus = response.status
       responseText = await response.text()
 
-      setStatusText(
-        response.ok
-          ? "Request completed, waiting for trace"
-          : `Proxy returned ${response.status}, waiting for trace`
-      )
-
-      const trace = await waitForTrace(traceId, requestController.signal)
+      const trace = await tracePromise
       if (trace) {
-        setPane2(formatJson(trace.pane2 ?? trace.error ?? { status: trace.status }))
-        setPane3(formatJson(trace.pane3 ?? { note: "No transformed upstream request was captured." }))
-        const nextPane4 =
-          trace.pane4 ?? { note: "No upstream response was captured." }
-        setPane4Data(nextPane4)
-        setPane4(formatJson(filterPane4Data(nextPane4, [2])))
-        setStatusText(
-          `Trace ${trace.status} · transport ${trace.transport} · proxy ${responseStatus}`
-        )
-        if (trace.error) {
-          setErrorText(formatInline(trace.error))
+        applyTrace(trace, responseStatus)
+        if (trace.status === "pending") {
+          if (trace.pane2 === null && trace.error === null) {
+            setPane2(formatJson(parseJsonOrWrap(responseText, responseStatus ?? 0)))
+          }
+          setErrorText("Trace data was not available before the timeout.")
+          setStatusText(`${buildTraceStatusText(trace, responseStatus)} · timeout`)
         }
         return
       }
 
-      setPane2(formatJson(parseJsonOrWrap(responseText, responseStatus)))
+      setPane2(formatJson(parseJsonOrWrap(responseText, responseStatus ?? 0)))
       setErrorText("Trace data was not available before the timeout.")
-      setStatusText(`Proxy ${responseStatus} · trace timeout`)
+      setStatusText(`Proxy ${responseStatus ?? 0} · trace timeout`)
     } catch (error) {
       if (requestController.signal.aborted) {
         setErrorText("Request was cancelled.")
         setStatusText("Request cancelled")
         return
       }
-      setPane2(formatJson(parseJsonOrWrap(responseText, responseStatus || 0)))
+      requestController.abort()
+      setPane2(formatJson(parseJsonOrWrap(responseText, responseStatus ?? 0)))
       setErrorText(`Request failed. ${String(error)}`)
       setStatusText("Request failed")
     } finally {
@@ -164,7 +188,7 @@ export function App() {
                 Visualize proxy payload mapping across the full request lifecycle
               </h1>
               <p className="text-sm text-muted-foreground">
-                Pane 1 is editable. Panes 2-4 are populated from the completed live trace.
+                Pane 1 is editable. Panes 2-4 update from the live proxy trace while the request runs.
               </p>
             </div>
 
@@ -281,7 +305,6 @@ export function App() {
                           ? selectedPane4FrameTypes.filter((value) => value !== frameType)
                           : [...selectedPane4FrameTypes, frameType].sort((a, b) => a - b)
                         setSelectedPane4FrameTypes(nextTypes)
-                        setPane4(formatJson(filterPane4Data(pane4Data, nextTypes)))
                       }}
                     >
                       {frameType}
@@ -397,28 +420,59 @@ function filterPane4Data(value: unknown, selectedTypes: number[]): unknown {
 async function waitForTrace(
   traceId: string,
   signal: AbortSignal,
+  onUpdate: (trace: TraceResponse) => void
 ): Promise<TraceResponse | null> {
-  for (let attempt = 0; attempt < 24; attempt += 1) {
+  let lastTrace: TraceResponse | null = null
+  let lastUpdatedAtUnix = -1
+
+  for (let attempt = 0; attempt < 240; attempt += 1) {
     if (signal.aborted) {
-      return null
+      return lastTrace
     }
+
     let response: Response
     try {
-      response = await fetchWithProxyRetry(`/__viz/traces/${traceId}`, {
-        signal,
-      })
+      response = await fetch(`/__viz/traces/${traceId}`, { signal })
     } catch {
-      return null
+      return lastTrace
     }
+
     if (response.ok) {
       const trace = (await response.json()) as TraceResponse
-      if (trace.status !== "pending" || attempt === 23) {
+      lastTrace = trace
+      if (trace.updatedAtUnix !== lastUpdatedAtUnix) {
+        lastUpdatedAtUnix = trace.updatedAtUnix
+        onUpdate(trace)
+      }
+      if (trace.status !== "pending") {
         return trace
       }
     }
+
     await delay(250)
   }
-  return null
+
+  return lastTrace
+}
+
+function buildTraceStatusText(
+  trace: TraceResponse,
+  responseStatus: number | null
+): string {
+  const parts = [trace.status === "pending" ? "Tracing live" : `Trace ${trace.status}`]
+
+  if (trace.transport) {
+    parts.push(`transport ${trace.transport}`)
+  }
+  if (trace.upstreamStatusCode !== null) {
+    parts.push(`upstream ${trace.upstreamStatusCode}`)
+  }
+  const resolvedProxyStatus = responseStatus ?? trace.proxyStatusCode
+  if (resolvedProxyStatus !== null) {
+    parts.push(`proxy ${resolvedProxyStatus}`)
+  }
+
+  return parts.join(" · ")
 }
 
 function delay(timeoutMs: number): Promise<void> {

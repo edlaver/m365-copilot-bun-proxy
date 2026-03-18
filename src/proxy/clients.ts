@@ -182,13 +182,14 @@ export class CopilotSubstrateClient {
     conversationId: string,
     request: ParsedOpenAiRequest,
     isStartOfSession: boolean,
+    onStreamUpdate?: (update: SubstrateStreamUpdate) => Promise<void>,
   ): Promise<ChatResult> {
     return this.chatCore(
       authorizationHeader,
       conversationId,
       request,
       isStartOfSession,
-      null,
+      onStreamUpdate ?? null,
     );
   }
 
@@ -270,6 +271,7 @@ export class CopilotSubstrateClient {
 
     const transcript: string[] = [];
     let invocationPayload: JsonObject | null = null;
+    let resolvedConversationId = conversationId;
     const receiver = createWebSocketReceiver(ws);
     try {
       await sendFrame(ws, requestUri, this.logger, {
@@ -289,6 +291,13 @@ export class CopilotSubstrateClient {
         handshakePayload,
       );
       transcript.push(handshakePayload);
+      if (onStreamUpdate) {
+        await onStreamUpdate({
+          deltaText: null,
+          conversationId: resolvedConversationId,
+          upstreamResponsePayload: buildSubstrateTranscriptPayload(transcript),
+        });
+      }
 
       for (const frame of splitFrames(handshakePayload)) {
         const frameJson = tryParseJsonObject(frame);
@@ -310,6 +319,14 @@ export class CopilotSubstrateClient {
         isStartOfSession,
         this.options,
       );
+      if (onStreamUpdate) {
+        await onStreamUpdate({
+          deltaText: null,
+          conversationId: resolvedConversationId,
+          upstreamRequestPayload: invocationPayload,
+          upstreamResponsePayload: buildSubstrateTranscriptPayload(transcript),
+        });
+      }
       await sendFrame(
         ws,
         requestUri,
@@ -319,7 +336,6 @@ export class CopilotSubstrateClient {
 
       let assistantText = "";
       let deltaBuilder = "";
-      let resolvedConversationId = conversationId;
       let responseError: string | null = null;
       let completed = false;
       let activeBotMessageId: string | null = null;
@@ -350,6 +366,13 @@ export class CopilotSubstrateClient {
           payload,
         );
         transcript.push(payload);
+        if (onStreamUpdate) {
+          await onStreamUpdate({
+            deltaText: null,
+            conversationId: resolvedConversationId,
+            upstreamResponsePayload: buildSubstrateTranscriptPayload(transcript),
+          });
+        }
 
         for (const frame of splitFrames(payload)) {
           if (!frame.trim()) {

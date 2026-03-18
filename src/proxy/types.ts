@@ -167,6 +167,8 @@ export type StoredOpenAiResponseRecord = {
 export type SubstrateStreamUpdate = {
   deltaText: string | null;
   conversationId: string | null;
+  upstreamRequestPayload?: JsonValue | null;
+  upstreamResponsePayload?: JsonValue | null;
 };
 
 export type SubstrateOptions = {

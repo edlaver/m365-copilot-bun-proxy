@@ -60,6 +60,7 @@ import {
   type OpenAiAssistantResponse,
   type ParsedOpenAiRequest,
   type ParsedResponsesRequest,
+  type SubstrateStreamUpdate,
   type WrapperOptions,
 } from "./types";
 import { ProxyTokenProvider } from "./token-provider";
@@ -302,6 +303,19 @@ function tracePane4(
   services.vizTraceStore?.setPane4(trace.traceId, pane4, upstreamStatusCode);
 }
 
+function traceSubstrateStreamUpdate(
+  services: Services,
+  trace: TraceContext | null,
+  update: SubstrateStreamUpdate,
+): void {
+  if (update.upstreamRequestPayload !== undefined) {
+    tracePane3(services, trace, update.upstreamRequestPayload ?? null);
+  }
+  if (update.upstreamResponsePayload !== undefined) {
+    tracePane4(services, trace, update.upstreamResponsePayload ?? null);
+  }
+}
+
 function traceError(
   services: Services,
   trace: TraceContext | null,
@@ -526,6 +540,9 @@ async function handleChat(
         conversationId!,
         parsedRequest,
         createdConversation,
+        async (update) => {
+          traceSubstrateStreamUpdate(services, trace, update);
+        },
       );
       tracePane3(services, trace, result.upstreamRequestPayload ?? null);
       tracePane4(
@@ -1265,6 +1282,9 @@ async function handleResponsesCreate(
         conversationId!,
         baseRequest,
         createdConversation,
+        async (update) => {
+          traceSubstrateStreamUpdate(services, trace, update);
+        },
       );
       tracePane3(services, trace, result.upstreamRequestPayload ?? null);
       tracePane4(
@@ -3300,6 +3320,12 @@ async function transformGraphStreamToResponses(
               break;
             }
             upstreamItems.push(tryParseJsonObject(data) ?? { rawText: data });
+            tracePane4(
+              services,
+              trace,
+              buildUpstreamStreamCapture("sse", upstreamItems),
+              graphResponse.status,
+            );
 
             const streamConversationId =
               extractCopilotConversationIdFromStream(data);
@@ -3483,6 +3509,7 @@ async function streamSubstrateAsResponses(
         parsedRequest.base,
         createdConversation,
         async (update) => {
+          traceSubstrateStreamUpdate(services, trace, update);
           if (update.conversationId) {
             conversationId = update.conversationId;
             if (scopedConversationKey) {
@@ -3965,6 +3992,12 @@ async function transformGraphStreamToOpenAi(
             break;
           }
           upstreamItems.push(tryParseJsonObject(data) ?? { rawText: data });
+          tracePane4(
+            services,
+            trace,
+            buildUpstreamStreamCapture("sse", upstreamItems),
+            graphResponse.status,
+          );
 
           const streamConversationId =
             extractCopilotConversationIdFromStream(data);
@@ -4294,6 +4327,9 @@ async function streamSubstrateAsSimulatedOpenAi(
           conversationId,
           parsedRequest,
           isStartOfSession,
+          async (update) => {
+            traceSubstrateStreamUpdate(services, trace, update);
+          },
         );
         if (
           shouldRetrySubstrateNoAssistantContent(
@@ -4316,6 +4352,9 @@ async function streamSubstrateAsSimulatedOpenAi(
               conversationId,
               parsedRequest,
               isStartOfSession,
+              async (update) => {
+                traceSubstrateStreamUpdate(services, trace, update);
+              },
             );
           }
         }
@@ -4354,6 +4393,7 @@ async function streamSubstrateAsSimulatedOpenAi(
         parsedRequest,
         isStartOfSession,
         async (update) => {
+          traceSubstrateStreamUpdate(services, trace, update);
           if (update.conversationId) {
             conversationId = update.conversationId;
             if (scopedConversationKey) {
@@ -4622,6 +4662,7 @@ async function streamSubstrateAsOpenAi(
         parsedRequest,
         createdConversation,
         async (update) => {
+          traceSubstrateStreamUpdate(services, trace, update);
           if (update.conversationId) {
             conversationId = update.conversationId;
             if (scopedConversationKey) {
