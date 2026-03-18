@@ -1,0 +1,35 @@
+{
+  "model": "m365-copilot",
+  "stream": false,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Implement fizz buzz."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "write_to_file",
+        "description": "Write content",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ]
+        }
+      }
+    }
+  ],
+  "tool_choice": "required"
+}

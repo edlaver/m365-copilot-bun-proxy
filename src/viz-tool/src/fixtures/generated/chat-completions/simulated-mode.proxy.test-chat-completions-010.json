@@ -1,0 +1,10 @@
+{
+  "model": "m365-copilot",
+  "stream": false,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Implement fizz buzz."
+    }
+  ]
+}

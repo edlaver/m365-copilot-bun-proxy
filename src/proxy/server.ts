@@ -41,7 +41,9 @@ import {
 } from "./responses-api";
 import {
   buildCopilotRequestPayload,
+  isSupportedOpenAiTransformMode,
   isSupportedTransport,
+  normalizeOpenAiTransformMode,
   resolveTransport,
   scopeConversationKey,
   selectConversation,
@@ -52,6 +54,7 @@ import {
   OpenAiTransformModes,
   ToolChoiceModes,
   TransportNames,
+  type JsonValue,
   type JsonObject,
   type ChatResult,
   type OpenAiAssistantResponse,
@@ -60,7 +63,9 @@ import {
   type WrapperOptions,
 } from "./types";
 import { ProxyTokenProvider } from "./token-provider";
+import { ProxyVizTraceStore } from "./viz-trace-store";
 import {
+  cloneJsonValue,
   extractGraphErrorMessage,
   isJsonObject,
   nowUnix,
@@ -78,7 +83,18 @@ type Services = {
   conversationStore: ConversationStore;
   responseStore: ResponseStore;
   tokenProvider: ProxyTokenProvider;
+  vizTraceStore?: ProxyVizTraceStore;
 };
+
+type TraceContext = {
+  traceId: string;
+  requestType: string;
+  transformMode: string;
+  transport: string;
+};
+
+const VizTraceHeaderName = "x-m365-viz-trace-id";
+const TransformModeHeaderName = "x-m365-openai-transform-mode";
 
 const AvailableModelIds = [
   "m365-copilot-quick",
@@ -96,6 +112,9 @@ export function createProxyApp(services: Services): Hono {
   app.get("/healthz", (c) => c.json({ status: "ok" }));
   app.get("/v1/models", (c) => c.json(buildModelsResponse()));
   app.get("/openai/v1/models", (c) => c.json(buildModelsResponse()));
+  app.get("/__viz/traces/:traceId", (c) =>
+    handleVizTraceRetrieve(services, c.req.param("traceId")),
+  );
 
   app.post("/v1/chat/completions", (c) => handleChat(c.req.raw, services));
   app.post("/openai/v1/chat/completions", (c) =>
@@ -136,12 +155,193 @@ function buildModelsResponse(): JsonObject {
   };
 }
 
+function handleVizTraceRetrieve(
+  services: Services,
+  traceId: string,
+): Response {
+  const normalizedTraceId = traceId.trim();
+  if (!normalizedTraceId) {
+    return new Response(
+      JSON.stringify({
+        error: {
+          message: "Trace id is required.",
+          type: "invalid_request_error",
+          param: "traceId",
+          code: "missing_trace_id",
+        },
+      }),
+      {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }
+
+  const record = services.vizTraceStore?.get(normalizedTraceId);
+  if (!record) {
+    return new Response(
+      JSON.stringify({
+        error: {
+          message: `Unknown trace id '${normalizedTraceId}'.`,
+          type: "invalid_request_error",
+          param: "traceId",
+          code: "unknown_trace_id",
+        },
+      }),
+      {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }
+
+  return new Response(JSON.stringify(record), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function resolveRequestOptionsWithTransformModeOverride(
+  request: Request,
+  options: WrapperOptions,
+):
+  | { ok: true; options: WrapperOptions; transformMode: string }
+  | { ok: false; error: string } {
+  const requestedMode = request.headers.get(TransformModeHeaderName);
+  if (!requestedMode || !requestedMode.trim()) {
+    return {
+      ok: true,
+      options,
+      transformMode: normalizeOpenAiTransformMode(options.openAiTransformMode),
+    };
+  }
+
+  if (!isSupportedOpenAiTransformMode(requestedMode)) {
+    return {
+      ok: false,
+      error: `Unsupported OpenAI transform mode '${requestedMode}'. Supported values: '${OpenAiTransformModes.Simulated}', '${OpenAiTransformModes.Mapped}'.`,
+    };
+  }
+
+  const transformMode = normalizeOpenAiTransformMode(requestedMode);
+  return {
+    ok: true,
+    options: {
+      ...options,
+      openAiTransformMode: transformMode,
+    },
+    transformMode,
+  };
+}
+
+function resolveTraceContext(
+  request: Request,
+  requestType: string,
+  transformMode: string,
+  transport: string,
+): TraceContext | null {
+  const traceId = request.headers.get(VizTraceHeaderName)?.trim();
+  if (!traceId) {
+    return null;
+  }
+  return {
+    traceId,
+    requestType,
+    transformMode,
+    transport,
+  };
+}
+
+function initializeTrace(
+  services: Services,
+  trace: TraceContext | null,
+): void {
+  if (!trace) {
+    return;
+  }
+  services.vizTraceStore?.start(
+    trace.traceId,
+    trace.requestType,
+    trace.transformMode,
+    trace.transport,
+  );
+}
+
+function tracePane2(
+  services: Services,
+  trace: TraceContext | null,
+  pane2: JsonValue | null,
+  proxyStatusCode: number | null = null,
+): void {
+  if (!trace) {
+    return;
+  }
+  services.vizTraceStore?.setPane2(trace.traceId, pane2, proxyStatusCode);
+}
+
+function tracePane3(
+  services: Services,
+  trace: TraceContext | null,
+  pane3: JsonValue | null,
+): void {
+  if (!trace) {
+    return;
+  }
+  services.vizTraceStore?.setPane3(trace.traceId, pane3);
+}
+
+function tracePane4(
+  services: Services,
+  trace: TraceContext | null,
+  pane4: JsonValue | null,
+  upstreamStatusCode: number | null = null,
+): void {
+  if (!trace) {
+    return;
+  }
+  services.vizTraceStore?.setPane4(trace.traceId, pane4, upstreamStatusCode);
+}
+
+function traceError(
+  services: Services,
+  trace: TraceContext | null,
+  error: JsonValue | null,
+  proxyStatusCode: number | null = null,
+): void {
+  if (!trace) {
+    return;
+  }
+  services.vizTraceStore?.setError(trace.traceId, error, proxyStatusCode);
+}
+
+function traceComplete(
+  services: Services,
+  trace: TraceContext | null,
+  proxyStatusCode: number | null = null,
+): void {
+  if (!trace) {
+    return;
+  }
+  services.vizTraceStore?.complete(trace.traceId, proxyStatusCode);
+}
+
+function buildUpstreamStreamCapture(
+  streamType: "sse" | "signalr",
+  chunks: JsonValue[],
+): JsonObject {
+  return {
+    streamType,
+    itemCount: chunks.length,
+    items: cloneJsonValue(chunks),
+  };
+}
+
 async function handleChat(
   request: Request,
   services: Services,
 ): Promise<Response> {
   const {
-    options,
+    options: baseOptions,
     graphClient,
     substrateClient,
     conversationStore,
@@ -170,8 +370,42 @@ async function handleChat(
     );
   }
 
+  const resolvedOptionsResult = resolveRequestOptionsWithTransformModeOverride(
+    request,
+    baseOptions,
+  );
+  if (!resolvedOptionsResult.ok) {
+    return writeOpenAiError(
+      services,
+      400,
+      resolvedOptionsResult.error,
+      "invalid_request_error",
+      "invalid_transform_mode",
+    );
+  }
+  const options = resolvedOptionsResult.options;
+  const selectedTransport = resolveTransport(request, payload.json, options);
+  const trace = resolveTraceContext(
+    request,
+    "chat/completions",
+    resolvedOptionsResult.transformMode,
+    selectedTransport,
+  );
+  initializeTrace(services, trace);
+
   const parsed = tryParseOpenAiRequest(payload.json, options);
   if (!parsed.ok) {
+    traceError(
+      services,
+      trace,
+      {
+        message: parsed.error,
+        type: "invalid_request_error",
+        param: null,
+        code: "invalid_request",
+      },
+      400,
+    );
     return writeOpenAiError(
       services,
       400,
@@ -182,8 +416,18 @@ async function handleChat(
   }
   const parsedRequest = parsed.request;
 
-  const selectedTransport = resolveTransport(request, payload.json, options);
   if (!isSupportedTransport(selectedTransport)) {
+    traceError(
+      services,
+      trace,
+      {
+        message: `Unsupported transport '${selectedTransport}'.`,
+        type: "invalid_request_error",
+        param: null,
+        code: "invalid_transport",
+      },
+      400,
+    );
     return writeOpenAiError(
       services,
       400,
@@ -269,19 +513,41 @@ async function handleChat(
   }
 
   const graphPayload = buildCopilotRequestPayload(parsedRequest);
+  if (selectedTransport === TransportNames.Graph) {
+    tracePane3(services, trace, graphPayload);
+  }
   const shouldBufferAssistant =
     requiresBufferedAssistantResponse(parsedRequest);
 
   const executeChatTurn = async (): Promise<ChatResult> => {
     if (selectedTransport === TransportNames.Substrate) {
-      return substrateClient.chat(
+      const result = await substrateClient.chat(
         authorizationHeader,
         conversationId!,
         parsedRequest,
         createdConversation,
       );
+      tracePane3(services, trace, result.upstreamRequestPayload ?? null);
+      tracePane4(
+        services,
+        trace,
+        result.upstreamResponsePayload ?? null,
+        result.statusCode,
+      );
+      return result;
     }
-    return graphClient.chat(authorizationHeader, conversationId!, graphPayload);
+    const result = await graphClient.chat(
+      authorizationHeader,
+      conversationId!,
+      graphPayload,
+    );
+    tracePane4(
+      services,
+      trace,
+      result.upstreamResponsePayload ?? null,
+      result.statusCode,
+    );
+    return result;
   };
   const executeChatTurnWithRecovery = async (): Promise<ChatResult> => {
     let result = await executeChatTurn();
@@ -320,6 +586,7 @@ async function handleChat(
         createdConversation,
         scopedConversationKey,
         responseHeaders,
+        trace,
       );
     }
 
@@ -439,6 +706,7 @@ async function handleChat(
           normalizedSimulatedPayload,
           options.includeConversationIdInResponseBody,
           responseHeaders,
+          trace,
         );
       }
 
@@ -497,6 +765,7 @@ async function handleChat(
         assistantResponse,
         options.includeConversationIdInResponseBody,
         responseHeaders,
+        trace,
       );
     }
 
@@ -523,6 +792,7 @@ async function handleChat(
         parsedRequest.promptText,
         options.includeConversationIdInResponseBody,
         responseHeaders,
+        trace,
       );
     }
 
@@ -534,6 +804,7 @@ async function handleChat(
       createdConversation,
       scopedConversationKey,
       responseHeaders,
+      trace,
     );
   }
 
@@ -633,6 +904,18 @@ async function handleChat(
       !normalized ||
       !hasUsableSimulatedChatCompletionPayload(normalized)
     ) {
+      traceError(
+        services,
+        trace,
+        {
+          message:
+            "Simulated mode response did not include a usable assistant message or tool call payload.",
+          type: "api_error",
+          param: null,
+          code: "invalid_simulated_payload",
+        },
+        502,
+      );
       return writeOpenAiError(
         services,
         502,
@@ -642,6 +925,8 @@ async function handleChat(
       );
     }
     const body = JSON.stringify(normalized);
+    tracePane2(services, trace, normalized, 200);
+    traceComplete(services, trace, 200);
     responseHeaders.set("content-type", "application/json");
     await debugLogger.logOutgoingResponse(200, responseHeaders.entries(), body);
     return new Response(body, { status: 200, headers: responseHeaders });
@@ -703,6 +988,8 @@ async function handleChat(
       options.includeConversationIdInResponseBody,
     ),
   );
+  tracePane2(services, trace, JSON.parse(body) as JsonValue, 200);
+  traceComplete(services, trace, 200);
 
   responseHeaders.set("content-type", "application/json");
   await debugLogger.logOutgoingResponse(200, responseHeaders.entries(), body);
@@ -714,7 +1001,7 @@ async function handleResponsesCreate(
   services: Services,
 ): Promise<Response> {
   const {
-    options,
+    options: baseOptions,
     graphClient,
     substrateClient,
     conversationStore,
@@ -744,8 +1031,42 @@ async function handleResponsesCreate(
     );
   }
 
+  const resolvedOptionsResult = resolveRequestOptionsWithTransformModeOverride(
+    request,
+    baseOptions,
+  );
+  if (!resolvedOptionsResult.ok) {
+    return writeOpenAiError(
+      services,
+      400,
+      resolvedOptionsResult.error,
+      "invalid_request_error",
+      "invalid_transform_mode",
+    );
+  }
+  const options = resolvedOptionsResult.options;
+  const selectedTransport = resolveTransport(request, payload.json, options);
+  const trace = resolveTraceContext(
+    request,
+    "responses",
+    resolvedOptionsResult.transformMode,
+    selectedTransport,
+  );
+  initializeTrace(services, trace);
+
   const parsed = tryParseResponsesRequest(payload.json, options);
   if (!parsed.ok) {
+    traceError(
+      services,
+      trace,
+      {
+        message: parsed.error,
+        type: "invalid_request_error",
+        param: null,
+        code: "invalid_request",
+      },
+      400,
+    );
     return writeOpenAiError(
       services,
       400,
@@ -757,8 +1078,18 @@ async function handleResponsesCreate(
   const parsedRequest = parsed.request;
   const baseRequest = parsedRequest.base;
 
-  const selectedTransport = resolveTransport(request, payload.json, options);
   if (!isSupportedTransport(selectedTransport)) {
+    traceError(
+      services,
+      trace,
+      {
+        message: `Unsupported transport '${selectedTransport}'.`,
+        type: "invalid_request_error",
+        param: null,
+        code: "invalid_transport",
+      },
+      400,
+    );
     return writeOpenAiError(
       services,
       400,
@@ -922,18 +1253,40 @@ async function handleResponsesCreate(
   }
 
   const graphPayload = buildCopilotRequestPayload(baseRequest);
+  if (selectedTransport === TransportNames.Graph) {
+    tracePane3(services, trace, graphPayload);
+  }
   const shouldBufferAssistant = requiresBufferedAssistantResponse(baseRequest);
 
   const executeChatTurn = async (): Promise<ChatResult> => {
     if (selectedTransport === TransportNames.Substrate) {
-      return substrateClient.chat(
+      const result = await substrateClient.chat(
         authorizationHeader,
         conversationId!,
         baseRequest,
         createdConversation,
       );
+      tracePane3(services, trace, result.upstreamRequestPayload ?? null);
+      tracePane4(
+        services,
+        trace,
+        result.upstreamResponsePayload ?? null,
+        result.statusCode,
+      );
+      return result;
     }
-    return graphClient.chat(authorizationHeader, conversationId!, graphPayload);
+    const result = await graphClient.chat(
+      authorizationHeader,
+      conversationId!,
+      graphPayload,
+    );
+    tracePane4(
+      services,
+      trace,
+      result.upstreamResponsePayload ?? null,
+      result.statusCode,
+    );
+    return result;
   };
   const executeChatTurnWithRecovery = async (): Promise<ChatResult> => {
     let result = await executeChatTurn();
@@ -1083,6 +1436,7 @@ async function handleResponsesCreate(
           conversationId,
           normalized.responseBody,
           responseHeaders,
+          trace,
         );
       }
 
@@ -1143,6 +1497,7 @@ async function handleResponsesCreate(
         conversationId,
         assistantResponse,
         responseHeaders,
+        trace,
       );
     }
 
@@ -1174,6 +1529,7 @@ async function handleResponsesCreate(
         conversationId,
         scopedConversationKey,
         responseHeaders,
+        trace,
       );
     }
 
@@ -1191,6 +1547,7 @@ async function handleResponsesCreate(
       createdConversation,
       scopedConversationKey,
       responseHeaders,
+      trace,
     );
   }
 
@@ -1291,6 +1648,18 @@ async function handleResponsesCreate(
       !normalized ||
       !hasUsableSimulatedResponsesPayload(normalized.responseBody)
     ) {
+      traceError(
+        services,
+        trace,
+        {
+          message:
+            "Simulated mode response did not include a usable response output payload.",
+          type: "api_error",
+          param: null,
+          code: "invalid_simulated_payload",
+        },
+        502,
+      );
       return writeOpenAiError(
         services,
         502,
@@ -1309,6 +1678,8 @@ async function handleResponsesCreate(
     );
     responseHeaders.set("content-type", "application/json");
     const body = JSON.stringify(normalized.responseBody);
+    tracePane2(services, trace, normalized.responseBody, 200);
+    traceComplete(services, trace, 200);
     await debugLogger.logOutgoingResponse(200, responseHeaders.entries(), body);
     return new Response(body, { status: 200, headers: responseHeaders });
   }
@@ -1380,6 +1751,8 @@ async function handleResponsesCreate(
 
   responseHeaders.set("content-type", "application/json");
   const body = JSON.stringify(responseBody);
+  tracePane2(services, trace, responseBody, 200);
+  traceComplete(services, trace, 200);
   await debugLogger.logOutgoingResponse(200, responseHeaders.entries(), body);
   return new Response(body, { status: 200, headers: responseHeaders });
 }
@@ -1643,6 +2016,7 @@ async function buildBufferedResponsesStreamResponse(
   conversationId: string,
   assistantResponse: ReturnType<typeof buildAssistantResponse>,
   headers: Headers,
+  trace: TraceContext | null,
 ): Promise<Response> {
   const responseId = createOpenAiResponseId();
   const createdAt = nowUnix();
@@ -1754,7 +2128,20 @@ async function buildBufferedResponsesStreamResponse(
         );
         writeDataEvent(buildResponseCompletedEvent(completed));
         services.responseStore.set(responseId, completed, conversationId);
+        tracePane2(services, trace, completed, 200);
+        traceComplete(services, trace, 200);
       } catch (error) {
+        traceError(
+          services,
+          trace,
+          {
+            message: `Failed to build streaming response. ${String(error)}`,
+            type: "api_error",
+            param: null,
+            code: "response_stream_error",
+          },
+          500,
+        );
         writeError(
           `Failed to build streaming response. ${String(error)}`,
           "response_stream_error",
@@ -2322,6 +2709,7 @@ async function buildSimulatedChatStreamResponse(
   payload: JsonObject,
   includeConversationId: boolean,
   headers: Headers,
+  trace: TraceContext | null,
 ): Promise<Response> {
   const normalized = normalizeSimulatedChatCompletionPayload(
     payload,
@@ -2332,6 +2720,17 @@ async function buildSimulatedChatStreamResponse(
   const assistantResponse =
     tryBuildAssistantResponseFromChatCompletionPayload(normalized);
   if (!assistantResponse) {
+    traceError(
+      services,
+      trace,
+      {
+        message: "Simulated chat payload was not a valid chat completion object.",
+        type: "api_error",
+        param: null,
+        code: "invalid_simulated_payload",
+      },
+      502,
+    );
     return writeOpenAiError(
       services,
       502,
@@ -2348,6 +2747,7 @@ async function buildSimulatedChatStreamResponse(
     assistantResponse,
     includeConversationId,
     headers,
+    trace,
   );
 }
 
@@ -2357,6 +2757,7 @@ async function buildSimulatedResponsesStreamResponse(
   conversationId: string,
   payload: JsonObject,
   headers: Headers,
+  trace: TraceContext | null,
 ): Promise<Response> {
   const includeConversationId = services.options.includeConversationIdInResponseBody;
   const normalized = normalizeSimulatedResponsesPayload(
@@ -2477,6 +2878,8 @@ async function buildSimulatedResponsesStreamResponse(
       );
       writeDataEvent(buildResponseCompletedEvent(completed));
       services.responseStore.set(responseId, completed, conversationId);
+      tracePane2(services, trace, completed, 200);
+      traceComplete(services, trace, 200);
       enqueueSseDoneEvent(controller, encoder);
       controller.close();
     },
@@ -2828,6 +3231,7 @@ async function transformGraphStreamToResponses(
   initialConversationId: string,
   scopedConversationKey: string | null,
   headers: Headers,
+  trace: TraceContext | null,
 ): Promise<Response> {
   const includeConversationId = services.options.includeConversationIdInResponseBody;
   const responseId = createOpenAiResponseId();
@@ -2835,6 +3239,7 @@ async function transformGraphStreamToResponses(
   const messageItemId = createOpenAiOutputItemId("msg");
   let conversationId = initialConversationId;
   let emittedContent = "";
+  const upstreamItems: JsonValue[] = [];
 
   const stream = new ReadableStream<Uint8Array>({
     start: async (controller) => {
@@ -2894,6 +3299,7 @@ async function transformGraphStreamToResponses(
             if (data.toLowerCase() === "[done]") {
               break;
             }
+            upstreamItems.push(tryParseJsonObject(data) ?? { rawText: data });
 
             const streamConversationId =
               extractCopilotConversationIdFromStream(data);
@@ -2961,7 +3367,32 @@ async function transformGraphStreamToResponses(
         );
         writeDataEvent(buildResponseCompletedEvent(completed));
         services.responseStore.set(responseId, completed, conversationId);
+        tracePane4(
+          services,
+          trace,
+          buildUpstreamStreamCapture("sse", upstreamItems),
+          graphResponse.status,
+        );
+        tracePane2(services, trace, completed, 200);
+        traceComplete(services, trace, 200);
       } catch (error) {
+        tracePane4(
+          services,
+          trace,
+          buildUpstreamStreamCapture("sse", upstreamItems),
+          graphResponse.status,
+        );
+        traceError(
+          services,
+          trace,
+          {
+            message: `Microsoft Graph chatOverStream request failed. ${String(error)}`,
+            type: "api_error",
+            param: null,
+            code: "graph_error",
+          },
+          500,
+        );
         writeError(
           `Microsoft Graph chatOverStream request failed. ${String(error)}`,
           "graph_error",
@@ -2989,6 +3420,7 @@ async function streamSubstrateAsResponses(
   createdConversation: boolean,
   scopedConversationKey: string | null,
   headers: Headers,
+  trace: TraceContext | null,
 ): Promise<Response> {
   const includeConversationId = services.options.includeConversationIdInResponseBody;
   const responseId = createOpenAiResponseId();
@@ -3071,6 +3503,13 @@ async function streamSubstrateAsResponses(
           );
         },
       );
+      tracePane3(services, trace, substrateResponse.upstreamRequestPayload ?? null);
+      tracePane4(
+        services,
+        trace,
+        substrateResponse.upstreamResponsePayload ?? null,
+        substrateResponse.statusCode,
+      );
 
       if (!substrateResponse.isSuccess) {
         const details = extractGraphErrorMessage(substrateResponse.rawBody);
@@ -3079,6 +3518,19 @@ async function streamSubstrateAsResponses(
             ? `Substrate chat request failed. ${details}`
             : "Substrate chat request failed.",
           "substrate_error",
+        );
+        traceError(
+          services,
+          trace,
+          {
+            message: details
+              ? `Substrate chat request failed. ${details}`
+              : "Substrate chat request failed.",
+            type: "api_error",
+            param: null,
+            code: "substrate_error",
+          },
+          substrateResponse.statusCode,
         );
         enqueueSseDoneEvent(controller, encoder);
         controller.close();
@@ -3129,6 +3581,8 @@ async function streamSubstrateAsResponses(
       );
       writeDataEvent(buildResponseCompletedEvent(completed));
       services.responseStore.set(responseId, completed, conversationId);
+      tracePane2(services, trace, completed, 200);
+      traceComplete(services, trace, 200);
       enqueueSseDoneEvent(controller, encoder);
       controller.close();
     },
@@ -3396,6 +3850,7 @@ async function buildAssistantStreamResponse(
   assistantResponse: ReturnType<typeof buildAssistantResponse>,
   includeConversationId: boolean,
   headers: Headers,
+  trace: TraceContext | null,
 ): Promise<Response> {
   const completionId = `chatcmpl-${randomUUID().replaceAll("-", "")}`;
   const created = nowUnix();
@@ -3437,6 +3892,18 @@ async function buildAssistantStreamResponse(
       }
       writeChunk(null, null, assistantResponse.finishReason);
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      tracePane2(
+        services,
+        trace,
+        buildChatCompletion(
+          model,
+          assistantResponse,
+          conversationId,
+          includeConversationId,
+        ),
+        200,
+      );
+      traceComplete(services, trace, 200);
       controller.close();
     },
   });
@@ -3457,11 +3924,13 @@ async function transformGraphStreamToOpenAi(
   promptText: string,
   includeConversationId: boolean,
   headers: Headers,
+  trace: TraceContext | null,
 ): Promise<Response> {
   const completionId = `chatcmpl-${randomUUID().replaceAll("-", "")}`;
   const created = nowUnix();
   let conversationId = initialConversationId;
   let emittedContent = "";
+  const upstreamItems: JsonValue[] = [];
 
   const stream = new ReadableStream<Uint8Array>({
     start: async (controller) => {
@@ -3495,6 +3964,7 @@ async function transformGraphStreamToOpenAi(
           if (data.toLowerCase() === "[done]") {
             break;
           }
+          upstreamItems.push(tryParseJsonObject(data) ?? { rawText: data });
 
           const streamConversationId =
             extractCopilotConversationIdFromStream(data);
@@ -3523,6 +3993,28 @@ async function transformGraphStreamToOpenAi(
       }
       writeChunk(null, null, "stop");
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      tracePane4(
+        services,
+        trace,
+        buildUpstreamStreamCapture("sse", upstreamItems),
+        graphResponse.status,
+      );
+      tracePane2(
+        services,
+        trace,
+        buildChatCompletion(
+          model,
+          {
+            content: emittedContent,
+            toolCalls: [],
+            finishReason: "stop",
+          },
+          conversationId,
+          includeConversationId,
+        ),
+        200,
+      );
+      traceComplete(services, trace, 200);
       controller.close();
     },
   });
@@ -3542,6 +4034,7 @@ async function streamSubstrateAsSimulatedOpenAi(
   createdConversation: boolean,
   scopedConversationKey: string | null,
   headers: Headers,
+  trace: TraceContext | null,
 ): Promise<Response> {
   const completionId = `chatcmpl-${randomUUID().replaceAll("-", "")}`;
   const created = nowUnix();
@@ -3885,6 +4378,13 @@ async function streamSubstrateAsSimulatedOpenAi(
           }
         },
       );
+      tracePane3(services, trace, substrateResponse.upstreamRequestPayload ?? null);
+      tracePane4(
+        services,
+        trace,
+        substrateResponse.upstreamResponsePayload ?? null,
+        substrateResponse.statusCode,
+      );
 
       if (!substrateResponse.isSuccess) {
         if (!streamInitialized) {
@@ -3920,6 +4420,17 @@ async function streamSubstrateAsSimulatedOpenAi(
           await logStreamingDiagnostics("upstream_failure_after_partial_emit", {
             statusCode: substrateResponse.statusCode,
           });
+          traceError(
+            services,
+            trace,
+            {
+              message,
+              type: "api_error",
+              param: null,
+              code: "substrate_error",
+            },
+            substrateResponse.statusCode,
+          );
           controller.close();
           return;
         }
@@ -3937,6 +4448,17 @@ async function streamSubstrateAsSimulatedOpenAi(
         await logStreamingDiagnostics("upstream_failure_before_emit", {
           statusCode: substrateResponse.statusCode,
         });
+        traceError(
+          services,
+          trace,
+          {
+            message: "Substrate chat request failed.",
+            type: "api_error",
+            param: null,
+            code: "substrate_error",
+          },
+          substrateResponse.statusCode,
+        );
         controller.close();
         return;
       }
@@ -4010,6 +4532,17 @@ async function streamSubstrateAsSimulatedOpenAi(
         );
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         await logStreamingDiagnostics("invalid_simulated_payload");
+        traceError(
+          services,
+          trace,
+          {
+            message,
+            type: "api_error",
+            param: null,
+            code: "invalid_simulated_payload",
+          },
+          502,
+        );
         controller.close();
         return;
       }
@@ -4018,6 +4551,8 @@ async function streamSubstrateAsSimulatedOpenAi(
       ensureInitialized();
       writeChunk(null, null, finalParsed.assistantResponse.finishReason);
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      tracePane2(services, trace, finalParsed.payload, 200);
+      traceComplete(services, trace, 200);
       await logStreamingDiagnostics("completed", {
         finalFinishReason: finalParsed.assistantResponse.finishReason,
         finalHasToolCalls: finalParsed.assistantResponse.toolCalls.length > 0,
@@ -4042,6 +4577,7 @@ async function streamSubstrateAsOpenAi(
   createdConversation: boolean,
   scopedConversationKey: string | null,
   headers: Headers,
+  trace: TraceContext | null,
 ): Promise<Response> {
   const completionId = `chatcmpl-${randomUUID().replaceAll("-", "")}`;
   const created = nowUnix();
@@ -4103,6 +4639,13 @@ async function streamSubstrateAsOpenAi(
           writeChunk(null, update.deltaText, null);
         },
       );
+      tracePane3(services, trace, substrateResponse.upstreamRequestPayload ?? null);
+      tracePane4(
+        services,
+        trace,
+        substrateResponse.upstreamResponsePayload ?? null,
+        substrateResponse.statusCode,
+      );
 
       if (!substrateResponse.isSuccess) {
         if (streamInitialized) {
@@ -4124,6 +4667,17 @@ async function streamSubstrateAsOpenAi(
             ),
           );
           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          traceError(
+            services,
+            trace,
+            {
+              message,
+              type: "api_error",
+              param: null,
+              code: "substrate_error",
+            },
+            substrateResponse.statusCode,
+          );
           controller.close();
           return;
         }
@@ -4138,6 +4692,17 @@ async function streamSubstrateAsOpenAi(
           encoder.encode(`event: error\ndata: ${await failure.text()}\n\n`),
         );
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        traceError(
+          services,
+          trace,
+          {
+            message: "Substrate chat request failed.",
+            type: "api_error",
+            param: null,
+            code: "substrate_error",
+          },
+          substrateResponse.statusCode,
+        );
         controller.close();
         return;
       }
@@ -4160,6 +4725,22 @@ async function streamSubstrateAsOpenAi(
       }
       writeChunk(null, null, "stop");
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      tracePane2(
+        services,
+        trace,
+        buildChatCompletion(
+          parsedRequest.model,
+          {
+            content: `${emitted}${trailing ?? ""}`.trim() ? `${emitted}${trailing ?? ""}` : assistantText,
+            toolCalls: [],
+            finishReason: "stop",
+          },
+          conversationId,
+          services.options.includeConversationIdInResponseBody,
+        ),
+        200,
+      );
+      traceComplete(services, trace, 200);
       controller.close();
     },
   });

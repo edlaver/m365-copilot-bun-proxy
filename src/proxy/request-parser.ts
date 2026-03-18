@@ -49,6 +49,19 @@ export function isSimulatedOpenAiTransformMode(mode: string): boolean {
   return normalizeOpenAiTransformMode(mode) === OpenAiTransformModes.Simulated;
 }
 
+export function isSupportedOpenAiTransformMode(
+  mode: string | null | undefined,
+): boolean {
+  if (!mode || !mode.trim()) {
+    return false;
+  }
+  const normalized = mode.trim().toLowerCase();
+  return (
+    normalized === OpenAiTransformModes.Simulated ||
+    normalized === OpenAiTransformModes.Mapped
+  );
+}
+
 export function isSupportedTransport(
   transport: string | null | undefined,
 ): boolean {

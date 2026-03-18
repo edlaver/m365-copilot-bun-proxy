@@ -107,6 +107,8 @@ export class CopilotGraphClient {
       rawBody,
       assistantText: null,
       conversationId: null,
+      upstreamRequestPayload: payload,
+      upstreamResponsePayload: parseRawJsonValue(rawBody),
     };
   }
 
@@ -267,6 +269,7 @@ export class CopilotSubstrateClient {
     }
 
     const transcript: string[] = [];
+    let invocationPayload: JsonObject | null = null;
     const receiver = createWebSocketReceiver(ws);
     try {
       await sendFrame(ws, requestUri, this.logger, {
@@ -299,18 +302,19 @@ export class CopilotSubstrateClient {
       }
 
       await sendFrame(ws, requestUri, this.logger, { type: 6 });
+      invocationPayload = buildInvocationPayload(
+        request,
+        conversationId,
+        sessionId,
+        clientRequestId,
+        isStartOfSession,
+        this.options,
+      );
       await sendFrame(
         ws,
         requestUri,
         this.logger,
-        buildInvocationPayload(
-          request,
-          conversationId,
-          sessionId,
-          clientRequestId,
-          isStartOfSession,
-          this.options,
-        ),
+        invocationPayload,
       );
 
       let assistantText = "";
@@ -488,15 +492,24 @@ export class CopilotSubstrateClient {
         rawBody: transcript.join("\n"),
         assistantText,
         conversationId: resolvedConversationId,
+        upstreamRequestPayload: invocationPayload,
+        upstreamResponsePayload: buildSubstrateTranscriptPayload(transcript),
       };
     } catch (error) {
       const message = String(error);
       if (message.toLowerCase().includes("timeout")) {
-        return buildFailure(504, "Substrate websocket request timed out.");
+        return buildFailure(
+          504,
+          "Substrate websocket request timed out.",
+          invocationPayload,
+          buildSubstrateTranscriptPayload(transcript),
+        );
       }
       return buildFailure(
         502,
         `Unexpected Substrate websocket failure. ${message}`,
+        invocationPayload,
+        buildSubstrateTranscriptPayload(transcript),
       );
     } finally {
       receiver.dispose();
@@ -522,7 +535,12 @@ function resolveConversationPath(
   );
 }
 
-function buildFailure(statusCode: number, message: string): ChatResult {
+function buildFailure(
+  statusCode: number,
+  message: string,
+  upstreamRequestPayload: JsonValue | null = null,
+  upstreamResponsePayload: JsonValue | null = null,
+): ChatResult {
   return {
     isSuccess: false,
     statusCode,
@@ -530,6 +548,8 @@ function buildFailure(statusCode: number, message: string): ChatResult {
     rawBody: JSON.stringify({ message }),
     assistantText: null,
     conversationId: null,
+    upstreamRequestPayload,
+    upstreamResponsePayload,
   };
 }
 
@@ -592,7 +612,7 @@ export function buildSubstrateHubUri(
   return hubUri;
 }
 
-function buildInvocationPayload(
+export function buildInvocationPayload(
   request: ParsedOpenAiRequest,
   conversationId: string,
   sessionId: string,
@@ -732,6 +752,29 @@ function splitFrames(payload: string): string[] {
     .split("\u001e")
     .map((frame) => frame.trim())
     .filter((frame) => frame.length > 0);
+}
+
+function parseRawJsonValue(rawBody: string): JsonValue {
+  try {
+    return JSON.parse(rawBody) as JsonValue;
+  } catch {
+    return { rawText: rawBody };
+  }
+}
+
+function buildSubstrateTranscriptPayload(transcript: string[]): JsonValue {
+  const frames = transcript.flatMap((payload) =>
+    splitFrames(payload).map((frame) => {
+      const parsed = tryParseJsonObject(frame);
+      return parsed ?? { rawText: frame };
+    }),
+  );
+
+  return {
+    streamType: "signalr",
+    frameCount: frames.length,
+    frames,
+  };
 }
 
 async function connectWebSocket(

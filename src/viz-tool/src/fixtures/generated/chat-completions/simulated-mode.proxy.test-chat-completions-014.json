@@ -1,0 +1,35 @@
+{
+  "model": "m365-copilot",
+  "stream": false,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Implement fibonacci."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "apply_diff",
+        "description": "Apply textual diff.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "diff": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "diff"
+          ]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto"
+}

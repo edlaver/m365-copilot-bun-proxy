@@ -1,0 +1,354 @@
+[
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-014",
+    "label": "chat/completions accepts second invalid apply_diff payload after retry (simulated-mode.proxy.test.ts:2321)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 2321,
+    "fileName": "simulated-mode.proxy.test-chat-completions-014.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-007",
+    "label": "chat/completions normalizes tool-call arguments objects into JSON strings (simulated-mode.proxy.test.ts:1697)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1697,
+    "fileName": "simulated-mode.proxy.test-chat-completions-007.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-006",
+    "label": "chat/completions normalizes top-level choice-shaped payload into choices array (simulated-mode.proxy.test.ts:1630)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1630,
+    "fileName": "simulated-mode.proxy.test-chat-completions-006.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-009",
+    "label": "chat/completions repairs malformed tool-call arguments with raw newlines (simulated-mode.proxy.test.ts:1850)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1850,
+    "fileName": "simulated-mode.proxy.test-chat-completions-009.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-010",
+    "label": "chat/completions retries once when first simulated payload is empty (simulated-mode.proxy.test.ts:1933)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1933,
+    "fileName": "simulated-mode.proxy.test-chat-completions-010.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-012",
+    "label": "chat/completions retries once when first tool payload has empty apply_diff SEARCH (simulated-mode.proxy.test.ts:2124)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 2124,
+    "fileName": "simulated-mode.proxy.test-chat-completions-012.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-011",
+    "label": "chat/completions retries once when tool-capable request gets plain text stop payload (simulated-mode.proxy.test.ts:2013)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 2013,
+    "fileName": "simulated-mode.proxy.test-chat-completions-011.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-008",
+    "label": "chat/completions simulated prompt includes explicit tool-call guidance (simulated-mode.proxy.test.ts:1764)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1764,
+    "fileName": "simulated-mode.proxy.test-chat-completions-008.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-013",
+    "label": "chat/completions stream accepts toolless auto-tool payload after one retry (simulated-mode.proxy.test.ts:2211)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 2211,
+    "fileName": "simulated-mode.proxy.test-chat-completions-013.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-003",
+    "label": "chat/completions stream can emit incremental content before full JSON parse when enabled (simulated-mode.proxy.test.ts:356)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 356,
+    "fileName": "simulated-mode.proxy.test-chat-completions-003.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-005",
+    "label": "chat/completions stream in simulated mode does not force retry for auto tool choice (simulated-mode.proxy.test.ts:598)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 598,
+    "fileName": "simulated-mode.proxy.test-chat-completions-005.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-004",
+    "label": "chat/completions stream in simulated mode retries toolless payload for strict tool requests (simulated-mode.proxy.test.ts:479)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 479,
+    "fileName": "simulated-mode.proxy.test-chat-completions-004.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-002",
+    "label": "chat/completions stream in simulated mode uses substrate stream path (simulated-mode.proxy.test.ts:254)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 254,
+    "fileName": "simulated-mode.proxy.test-chat-completions-002.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-chat-completions-001",
+    "label": "chat/completions stream uses simulated JSON payload (simulated-mode.proxy.test.ts:154)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 154,
+    "fileName": "simulated-mode.proxy.test-chat-completions-001.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-008",
+    "label": "responses accepts spec conversation object input (simulated-mode.proxy.test.ts:1069)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1069,
+    "fileName": "simulated-mode.proxy.test-responses-008.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-007",
+    "label": "responses accepts spec conversation string input and returns spec conversation output (simulated-mode.proxy.test.ts:1021)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1021,
+    "fileName": "simulated-mode.proxy.test-responses-007.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-003",
+    "label": "responses non-stream normalizes assistant role/content output items (simulated-mode.proxy.test.ts:780)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 780,
+    "fileName": "simulated-mode.proxy.test-responses-003.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-002",
+    "label": "responses non-stream normalizes output_text output items (simulated-mode.proxy.test.ts:739)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 739,
+    "fileName": "simulated-mode.proxy.test-responses-002.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-001",
+    "label": "responses non-stream returns simulated response payload object (simulated-mode.proxy.test.ts:698)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 698,
+    "fileName": "simulated-mode.proxy.test-responses-001.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-009",
+    "label": "responses rejects conversation combined with previous_response_id (simulated-mode.proxy.test.ts:1108)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1108,
+    "fileName": "simulated-mode.proxy.test-responses-009.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-013",
+    "label": "responses replay suppression keeps conversation header when body conversation is disabled (simulated-mode.proxy.test.ts:1446)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1446,
+    "fileName": "simulated-mode.proxy.test-responses-013.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-014",
+    "label": "responses replay suppression uses stable replay id for growing assistant tails (simulated-mode.proxy.test.ts:1509)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1509,
+    "fileName": "simulated-mode.proxy.test-responses-014.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-015",
+    "label": "responses replay suppression uses stable replay id for growing assistant tails (simulated-mode.proxy.test.ts:1531)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1531,
+    "fileName": "simulated-mode.proxy.test-responses-015.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-016",
+    "label": "responses replay suppression uses stable replay id for growing assistant tails (simulated-mode.proxy.test.ts:1563)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1563,
+    "fileName": "simulated-mode.proxy.test-responses-016.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-010",
+    "label": "responses short-circuits repeated trailing assistant replay loop for non-stream requests (simulated-mode.proxy.test.ts:1221)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1221,
+    "fileName": "simulated-mode.proxy.test-responses-010.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-011",
+    "label": "responses short-circuits repeated trailing assistant replay loop for streaming requests (simulated-mode.proxy.test.ts:1287)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1287,
+    "fileName": "simulated-mode.proxy.test-responses-011.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-004",
+    "label": "responses stream assigns unique proxy response ids per request (simulated-mode.proxy.test.ts:855)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 855,
+    "fileName": "simulated-mode.proxy.test-responses-004.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-005",
+    "label": "responses stream assigns unique proxy response ids per request (simulated-mode.proxy.test.ts:869)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 869,
+    "fileName": "simulated-mode.proxy.test-responses-005.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-006",
+    "label": "responses stream emits canonical in_progress response shape (simulated-mode.proxy.test.ts:923)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 923,
+    "fileName": "simulated-mode.proxy.test-responses-006.json"
+  },
+  {
+    "id": "simulated-mode.proxy.test-responses-012",
+    "label": "responses suppresses replay loop even with a single trailing assistant message (simulated-mode.proxy.test.ts:1393)",
+    "requestType": "responses",
+    "transformModes": [
+      "simulated"
+    ],
+    "sourceFile": "tests/simulated-mode.proxy.test.ts",
+    "sourceLine": 1393,
+    "fileName": "simulated-mode.proxy.test-responses-012.json"
+  },
+  {
+    "id": "conversation-reuse.proxy.test-chat-completions-002",
+    "label": "reuses conversation id across follow-up calls when user key is stable (conversation-reuse.proxy.test.ts:105)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "mapped"
+    ],
+    "sourceFile": "tests/conversation-reuse.proxy.test.ts",
+    "sourceLine": 105,
+    "fileName": "conversation-reuse.proxy.test-chat-completions-002.json"
+  },
+  {
+    "id": "conversation-reuse.proxy.test-chat-completions-001",
+    "label": "reuses conversation id across follow-up calls when user key is stable (conversation-reuse.proxy.test.ts:94)",
+    "requestType": "chat/completions",
+    "transformModes": [
+      "mapped"
+    ],
+    "sourceFile": "tests/conversation-reuse.proxy.test.ts",
+    "sourceLine": 94,
+    "fileName": "conversation-reuse.proxy.test-chat-completions-001.json"
+  }
+]

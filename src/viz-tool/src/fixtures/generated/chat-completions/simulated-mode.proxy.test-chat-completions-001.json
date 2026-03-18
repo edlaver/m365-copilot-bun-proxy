@@ -1,0 +1,10 @@
+{
+  "model": "m365-copilot",
+  "stream": true,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Call get_time for UTC."
+    }
+  ]
+}

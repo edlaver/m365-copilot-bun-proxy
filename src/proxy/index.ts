@@ -8,6 +8,7 @@ import { DebugMarkdownLogger } from "./logger";
 import { ResponseStore } from "./response-store";
 import { createProxyApp } from "./server";
 import { ProxyTokenProvider } from "./token-provider";
+import { ProxyVizTraceStore } from "./viz-trace-store";
 import type { WrapperOptions } from "./types";
 import { parseListenUrl } from "./utils";
 
@@ -22,6 +23,7 @@ const graphClient = new CopilotGraphClient(options, debugLogger);
 const substrateClient = new CopilotSubstrateClient(options, debugLogger);
 const conversationStore = new ConversationStore(options);
 const responseStore = new ResponseStore(options);
+const vizTraceStore = new ProxyVizTraceStore(options.conversationTtlMinutes * 60);
 const tokenProvider = new ProxyTokenProvider({
   ignoreIncomingAuthorizationHeader: options.ignoreIncomingAuthorizationHeader,
   playwrightBrowser: options.playwrightBrowser,
@@ -35,6 +37,7 @@ const app = createProxyApp({
   conversationStore,
   responseStore,
   tokenProvider,
+  vizTraceStore,
 });
 
 const listen = parseListenUrl(options.listenUrl);

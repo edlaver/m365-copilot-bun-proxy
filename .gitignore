@@ -183,3 +183,6 @@ dist/
 
 # Not needed since we use bun
 package-lock.json
+src/viz-tool/.bun-install/install/cache/.tmp/.bd9dfffbfd96edfd-00000000.hm
+src/viz-tool/.bun-tmp/.5abdefe6fffdbc7e-00000000.hm
+src/viz-tool/.bun-tmp/.bd9dfffbfd96edfd-00000000.hm

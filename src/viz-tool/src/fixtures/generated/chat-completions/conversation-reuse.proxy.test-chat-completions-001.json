@@ -1,0 +1,10 @@
+{
+  "model": "m365-copilot",
+  "user": "roo-thread-1",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hello"
+    }
+  ]
+}

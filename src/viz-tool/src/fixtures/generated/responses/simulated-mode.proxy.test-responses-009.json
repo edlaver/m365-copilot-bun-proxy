@@ -1,0 +1,7 @@
+{
+  "model": "m365-copilot",
+  "stream": false,
+  "conversation": "conv_spec_string_2",
+  "previous_response_id": "resp_prev_1",
+  "input": "Say hello."
+}

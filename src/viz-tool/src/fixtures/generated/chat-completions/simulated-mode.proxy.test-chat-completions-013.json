@@ -1,0 +1,31 @@
+{
+  "model": "m365-copilot",
+  "stream": true,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Explain the project."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "ask_followup_question",
+        "description": "Ask a follow-up question.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "question"
+          ]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto"
+}

@@ -1,0 +1,31 @@
+{
+  "model": "m365-copilot",
+  "stream": true,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarize README."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read a file",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto"
+}

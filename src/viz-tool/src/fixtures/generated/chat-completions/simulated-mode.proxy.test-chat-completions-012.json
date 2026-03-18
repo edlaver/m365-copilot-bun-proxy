@@ -1,0 +1,57 @@
+{
+  "model": "m365-copilot",
+  "stream": false,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Implement fibonacci."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "apply_diff",
+        "description": "Apply textual diff.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "diff": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "diff"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "write_to_file",
+        "description": "Write file content.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ]
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto"
+}

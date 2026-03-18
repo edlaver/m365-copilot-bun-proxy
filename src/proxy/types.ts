@@ -37,6 +37,12 @@ export const OpenAiTransformModes = {
   Mapped: "mapped",
 } as const;
 
+export const ProxyVizTraceStatuses = {
+  Pending: "pending",
+  Completed: "completed",
+  Failed: "failed",
+} as const;
+
 export const PlaywrightBrowsers = {
   Edge: "edge",
   Chrome: "chrome",
@@ -127,6 +133,27 @@ export type ChatResult = {
   rawBody: string;
   assistantText: string | null;
   conversationId: string | null;
+  upstreamRequestPayload?: JsonValue | null;
+  upstreamResponsePayload?: JsonValue | null;
+};
+
+export type ProxyVizTraceStatus =
+  (typeof ProxyVizTraceStatuses)[keyof typeof ProxyVizTraceStatuses];
+
+export type ProxyVizTraceRecord = {
+  traceId: string;
+  status: ProxyVizTraceStatus;
+  requestType: string;
+  transformMode: string;
+  transport: string;
+  proxyStatusCode: number | null;
+  upstreamStatusCode: number | null;
+  pane2: JsonValue | null;
+  pane3: JsonValue | null;
+  pane4: JsonValue | null;
+  error: JsonValue | null;
+  createdAtUnix: number;
+  updatedAtUnix: number;
 };
 
 export type StoredOpenAiResponseRecord = {

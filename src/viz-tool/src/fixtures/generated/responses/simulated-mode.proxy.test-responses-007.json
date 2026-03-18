@@ -1,0 +1,6 @@
+{
+  "model": "m365-copilot",
+  "stream": false,
+  "conversation": "conv_spec_string_1",
+  "input": "Say hello."
+}
