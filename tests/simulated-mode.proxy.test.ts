@@ -107,7 +107,13 @@ describe("simulated transform mode proxy flow", () => {
       (simulatedCompletion.choices as JsonObject[])[0]?.message,
     );
     expect(typeof capturedPrompt).toBe("string");
-    expect(capturedPrompt).toContain("simulating the OpenAI chat.completions");
+    expect(capturedPrompt).toContain(
+      "The JSON payload below is an entire request for the OpenAI chat.completions format.",
+    );
+    expect(capturedPrompt).toContain(
+      "Focus on producing a valid response object that matches the expected OpenAI format for this request.",
+    );
+    expect(capturedPrompt).not.toContain("You are simulating");
     expect(capturedPrompt).toContain("```json");
     expect(capturedPrompt).toContain("\"messages\"");
   });

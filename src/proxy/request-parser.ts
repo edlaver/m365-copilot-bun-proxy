@@ -406,10 +406,10 @@ function buildSimulatedPrompt(
     endpointFormat === "responses" ? "/v1/responses" : "/v1/chat/completions";
   const serializedRequest = JSON.stringify(requestJson, null, 2);
   const lines: string[] = [
-    `You are simulating the OpenAI ${endpointFormat} endpoint.`,
+    `The JSON payload below is an entire request for the OpenAI ${endpointFormat} format.`,
     `The JSON payload below is an entire request for POST ${endpointPath}.`,
     `Interpret it exactly in OpenAI ${endpointFormat} format and produce the corresponding response in the same format.`,
-    "You are simulating model output, not enforcing API policy checks.",
+    "Focus on producing a valid response object that matches the expected OpenAI format for this request.",
     "Return exactly one markdown JSON code block containing a single valid JSON object and no surrounding prose.",
     'If the payload has "stream": true, still return the final completed JSON object (not SSE events).',
   ];
