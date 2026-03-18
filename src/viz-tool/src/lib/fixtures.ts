@@ -17,8 +17,15 @@ const fixtureModules = import.meta.glob("../fixtures/generated/**/*.json", {
   eager: true,
   import: "default",
 }) as Record<string, unknown>
+const manualFixtureModules = import.meta.glob("../fixtures/manual/**/*.json", {
+  eager: true,
+  import: "default",
+}) as Record<string, unknown>
 
 const manifestModule = Object.entries(fixtureModules).find(([filePath]) =>
+  filePath.endsWith("/manifest.json")
+)?.[1] as FixtureManifestEntry[] | undefined
+const manualManifestModule = Object.entries(manualFixtureModules).find(([filePath]) =>
   filePath.endsWith("/manifest.json")
 )?.[1] as FixtureManifestEntry[] | undefined
 
@@ -26,10 +33,17 @@ if (!manifestModule) {
   throw new Error("Fixture manifest is missing.")
 }
 
-const manifest = manifestModule
+if (!manualManifestModule) {
+  throw new Error("Manual fixture manifest is missing.")
+}
+
+const manifest = [...manualManifestModule, ...manifestModule]
 
 const fixtureContentByFileName = new Map<string, string>()
-for (const [filePath, moduleValue] of Object.entries(fixtureModules)) {
+for (const [filePath, moduleValue] of [
+  ...Object.entries(manualFixtureModules),
+  ...Object.entries(fixtureModules),
+]) {
   if (filePath.endsWith("/manifest.json")) {
     continue
   }
@@ -42,13 +56,9 @@ for (const [filePath, moduleValue] of Object.entries(fixtureModules)) {
 
 export function getFixtures(
   requestType: RequestType,
-  transformMode: TransformMode,
+  _transformMode: TransformMode,
 ): Array<FixtureManifestEntry & { content: string }> {
-  const byRequestType = manifest.filter((fixture) => fixture.requestType === requestType)
-  const preferred = byRequestType.filter((fixture) =>
-    fixture.transformModes.includes(transformMode)
-  )
-  const selected = preferred.length > 0 ? preferred : byRequestType
+  const selected = manifest.filter((fixture) => fixture.requestType === requestType)
 
   return selected.map((fixture) => ({
     ...fixture,

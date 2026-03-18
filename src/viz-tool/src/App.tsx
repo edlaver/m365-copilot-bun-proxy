@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { AlertCircle, LoaderCircle, RefreshCcw } from "lucide-react"
 
 import { JsonPane } from "@/components/json-pane"
@@ -32,7 +32,7 @@ const emptyPaneText = JSON.stringify(
 const maxProxyRetryAttempts = 3
 
 export function App() {
-  const [transformMode, setTransformMode] = useState<TransformMode>("simulated")
+  const [transformMode, setTransformMode] = useState<TransformMode>("mapped")
   const [requestType, setRequestType] = useState<RequestType>("chat/completions")
   const [selectedFixtureId, setSelectedFixtureId] = useState("")
   const [pane1, setPane1] = useState("")
@@ -44,6 +44,7 @@ export function App() {
   const [statusText, setStatusText] = useState("Ready")
   const [errorText, setErrorText] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const activeRequestControllerRef = useRef<AbortController | null>(null)
 
   const fixtures = getFixtures(requestType, transformMode)
   const selectedFixture =
@@ -80,6 +81,8 @@ export function App() {
     }
 
     const traceId = crypto.randomUUID()
+    const requestController = new AbortController()
+    activeRequestControllerRef.current = requestController
     const endpoint =
       requestType === "chat/completions"
         ? "/v1/chat/completions"
@@ -90,6 +93,7 @@ export function App() {
     try {
       const response = await fetchWithProxyRetry(endpoint, {
         method: "POST",
+        signal: requestController.signal,
         headers: {
           "content-type": "application/json",
           "x-m365-openai-transform-mode": transformMode,
@@ -106,7 +110,7 @@ export function App() {
           : `Proxy returned ${response.status}, waiting for trace`
       )
 
-      const trace = await waitForTrace(traceId)
+      const trace = await waitForTrace(traceId, requestController.signal)
       if (trace) {
         setPane2(formatJson(trace.pane2 ?? trace.error ?? { status: trace.status }))
         setPane3(formatJson(trace.pane3 ?? { note: "No transformed upstream request was captured." }))
@@ -127,12 +131,24 @@ export function App() {
       setErrorText("Trace data was not available before the timeout.")
       setStatusText(`Proxy ${responseStatus} · trace timeout`)
     } catch (error) {
+      if (requestController.signal.aborted) {
+        setErrorText("Request was cancelled.")
+        setStatusText("Request cancelled")
+        return
+      }
       setPane2(formatJson(parseJsonOrWrap(responseText, responseStatus || 0)))
       setErrorText(`Request failed. ${String(error)}`)
       setStatusText("Request failed")
     } finally {
+      if (activeRequestControllerRef.current === requestController) {
+        activeRequestControllerRef.current = null
+      }
       setIsSubmitting(false)
     }
+  }
+
+  function handleCancel() {
+    activeRequestControllerRef.current?.abort()
   }
 
   return (
@@ -179,15 +195,21 @@ export function App() {
                   <Button
                     className="w-full md:w-auto"
                     size="lg"
-                    onClick={() => void handleSubmit()}
-                    disabled={isSubmitting}
+                    variant={isSubmitting ? "destructive" : "default"}
+                    onClick={() => {
+                      if (isSubmitting) {
+                        handleCancel()
+                        return
+                      }
+                      void handleSubmit()
+                    }}
                   >
                     {isSubmitting ? (
                       <LoaderCircle className="size-4 animate-spin" />
                     ) : (
                       <RefreshCcw className="size-4" />
                     )}
-                    Submit
+                    {isSubmitting ? "Cancel" : "Submit"}
                   </Button>
                 </div>
               </div>
@@ -372,11 +394,19 @@ function filterPane4Data(value: unknown, selectedTypes: number[]): unknown {
   }
 }
 
-async function waitForTrace(traceId: string): Promise<TraceResponse | null> {
+async function waitForTrace(
+  traceId: string,
+  signal: AbortSignal,
+): Promise<TraceResponse | null> {
   for (let attempt = 0; attempt < 24; attempt += 1) {
+    if (signal.aborted) {
+      return null
+    }
     let response: Response
     try {
-      response = await fetchWithProxyRetry(`/__viz/traces/${traceId}`)
+      response = await fetchWithProxyRetry(`/__viz/traces/${traceId}`, {
+        signal,
+      })
     } catch {
       return null
     }
@@ -406,6 +436,9 @@ async function fetchWithProxyRetry(
     try {
       return await fetch(input, init)
     } catch (error) {
+      if (init?.signal?.aborted) {
+        throw error
+      }
       lastError = error
       if (attempt === maxProxyRetryAttempts) {
         break

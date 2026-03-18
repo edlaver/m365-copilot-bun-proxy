@@ -1,0 +1,47 @@
+[
+  {
+    "id": "manual-mapped-chat-weather-req-1",
+    "label": "Manual · Weather · req 1 · initial tool list",
+    "requestType": "chat/completions",
+    "transformModes": ["mapped"],
+    "sourceFile": "manual/weather",
+    "sourceLine": 1,
+    "fileName": "manual-mapped-chat-weather-req-1.json"
+  },
+  {
+    "id": "manual-mapped-chat-weather-req-2",
+    "label": "Manual · Weather · req 2 · tool result follow-up",
+    "requestType": "chat/completions",
+    "transformModes": ["mapped"],
+    "sourceFile": "manual/weather",
+    "sourceLine": 2,
+    "fileName": "manual-mapped-chat-weather-req-2.json"
+  },
+  {
+    "id": "manual-mapped-chat-edit-file-req-1",
+    "label": "Manual · Edit file · req 1 · initial tool list",
+    "requestType": "chat/completions",
+    "transformModes": ["mapped"],
+    "sourceFile": "manual/edit-file",
+    "sourceLine": 1,
+    "fileName": "manual-mapped-chat-edit-file-req-1.json"
+  },
+  {
+    "id": "manual-mapped-chat-edit-file-req-2",
+    "label": "Manual · Edit file · req 2 · read_file result follow-up",
+    "requestType": "chat/completions",
+    "transformModes": ["mapped"],
+    "sourceFile": "manual/edit-file",
+    "sourceLine": 2,
+    "fileName": "manual-mapped-chat-edit-file-req-2.json"
+  },
+  {
+    "id": "manual-mapped-chat-edit-file-req-3",
+    "label": "Manual · Edit file · req 3 · apply_diff result follow-up",
+    "requestType": "chat/completions",
+    "transformModes": ["mapped"],
+    "sourceFile": "manual/edit-file",
+    "sourceLine": 3,
+    "fileName": "manual-mapped-chat-edit-file-req-3.json"
+  }
+]
