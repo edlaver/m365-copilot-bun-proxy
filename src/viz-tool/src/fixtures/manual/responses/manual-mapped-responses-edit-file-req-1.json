@@ -1,0 +1,60 @@
+{
+  "model": "m365-copilot",
+  "stream": false,
+  "instructions": "You are a coding assistant. Use tools for file inspection and edits.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Update src/app.ts so the header title says 'Project Atlas' instead of 'Project Apollo'. Read the file before editing it."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read a UTF-8 file from the workspace.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": ["path"],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "apply_diff",
+        "description": "Apply a targeted diff edit to a file.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "search": {
+              "type": "string"
+            },
+            "replace": {
+              "type": "string"
+            }
+          },
+          "required": ["path", "search", "replace"],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto"
+}

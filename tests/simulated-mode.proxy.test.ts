@@ -803,6 +803,77 @@ describe("simulated transform mode proxy flow", () => {
     expect(body.output_text).toBe("hello from role/content item");
   });
 
+  test("responses non-stream accepts outputs alias with nested function_call payloads", async () => {
+    const simulatedResponse: JsonObject = {
+      id: "response-002",
+      object: "response",
+      model: "m365-copilot",
+      outputs: [
+        {
+          type: "function_call",
+          function_call: {
+            name: "get_weather",
+            arguments: "{\"location\":\"London\",\"unit\":\"celsius\"}",
+          },
+        },
+      ],
+    };
+
+    const app = createProxyApp(
+      createServices((conversationId, payload) =>
+        buildGraphChatResult(
+          conversationId,
+          payload,
+          toMarkdownJson(simulatedResponse),
+        ),
+      ),
+    );
+
+    const createResponse = await app.fetch(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-m365-transport": TransportNames.Graph,
+        },
+        body: JSON.stringify({
+          model: "m365-copilot",
+          stream: false,
+          input: "What's the weather in London?",
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "get_weather",
+                description: "Get the weather for a location.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    location: { type: "string" },
+                    unit: { type: "string" },
+                  },
+                  required: ["location", "unit"],
+                },
+              },
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(createResponse.status).toBe(200);
+    const body = (await createResponse.json()) as JsonObject;
+    expect(body.id).toBe("response-002");
+    expect(Array.isArray(body.output)).toBeTrue();
+    expect(body.outputs).toBeUndefined();
+    const outputItem = (body.output as JsonObject[])[0] as JsonObject;
+    expect(tryGetString(outputItem, "type")).toBe("function_call");
+    expect(tryGetString(outputItem, "name")).toBe("get_weather");
+    expect(typeof outputItem.arguments).toBe("string");
+    expect(String(outputItem.arguments)).toContain("\"location\":\"London\"");
+    expect(tryGetString(body, "output_text") ?? "").toBe("");
+  });
+
   test("responses stream assigns unique proxy response ids per request", async () => {
     const simulatedResponse: JsonObject = {
       id: "resp_001",

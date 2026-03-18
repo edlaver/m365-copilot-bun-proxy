@@ -2316,7 +2316,7 @@ function looksLikeChatChoice(node: JsonObject): boolean {
 }
 
 function buildChoiceFromResponsesShape(payload: JsonObject): JsonObject | null {
-  const output = payload.output;
+  const output = getSimulatedResponsesOutputItems(payload);
   if (!Array.isArray(output) || output.length === 0) {
     return null;
   }
@@ -2328,19 +2328,23 @@ function buildChoiceFromResponsesShape(payload: JsonObject): JsonObject | null {
     if (!isJsonObject(item)) {
       continue;
     }
-    const type = (tryGetString(item, "type") ?? "").toLowerCase();
-    if (type === "function_call") {
-      const toolCall = normalizeSimulatedToolCall({
-        id:
-          tryGetString(item, "call_id") ??
-          tryGetString(item, "id") ??
-          `call_${randomUUID().replaceAll("-", "")}`,
-        type: "function",
-        function: {
-          name: tryGetString(item, "name") ?? "unknown_tool",
-          arguments: item.arguments,
-        },
-      });
+    if (isSimulatedResponsesFunctionCallOutputItem(item)) {
+      const normalizedFunctionCallItem =
+        normalizeSimulatedResponsesFunctionCallItem(item);
+      const toolCall = normalizedFunctionCallItem
+        ? normalizeSimulatedToolCall({
+            id:
+              tryGetString(normalizedFunctionCallItem, "call_id") ??
+              tryGetString(normalizedFunctionCallItem, "id") ??
+              `call_${randomUUID().replaceAll("-", "")}`,
+            type: "function",
+            function: {
+              name:
+                tryGetString(normalizedFunctionCallItem, "name") ?? "unknown_tool",
+              arguments: normalizedFunctionCallItem.arguments,
+            },
+          })
+        : null;
       if (toolCall) {
         toolCalls.push(toolCall);
       }
@@ -2562,7 +2566,8 @@ function normalizeSimulatedResponsesPayload(
   if (!tryGetString(responseBody, "model")) {
     responseBody.model = parsedRequest.base.model;
   }
-  if (!Array.isArray(responseBody.output)) {
+  const rawOutputItems = getSimulatedResponsesOutputItems(responseBody);
+  if (!Array.isArray(rawOutputItems)) {
     const outputText =
       tryGetString(responseBody, "output_text") ??
       tryGetString(responseBody, "text") ??
@@ -2572,7 +2577,10 @@ function normalizeSimulatedResponsesPayload(
       buildMessageOutputItem(createOpenAiOutputItemId("msg"), outputText, "completed"),
     ];
   } else {
-    responseBody.output = normalizeSimulatedResponseOutputItems(responseBody.output);
+    responseBody.output = normalizeSimulatedResponseOutputItems(rawOutputItems);
+  }
+  if (responseBody.outputs !== undefined) {
+    delete responseBody.outputs;
   }
   if (!tryGetString(responseBody, "output_text")?.trim()) {
     responseBody.output_text = extractResponseOutputText(
@@ -3152,9 +3160,10 @@ function normalizeSimulatedResponseOutputItems(outputItems: unknown[]): JsonObje
       continue;
     }
 
-    const type = (tryGetString(item, "type") ?? "").toLowerCase();
-    if (type === "function_call") {
-      normalized.push(item);
+    if (isSimulatedResponsesFunctionCallOutputItem(item)) {
+      normalized.push(
+        normalizeSimulatedResponsesFunctionCallItem(item) ?? item,
+      );
       continue;
     }
 
@@ -3170,6 +3179,52 @@ function normalizeSimulatedResponseOutputItems(outputItems: unknown[]): JsonObje
   }
 
   return normalized;
+}
+
+function getSimulatedResponsesOutputItems(payload: JsonObject): unknown[] | null {
+  if (Array.isArray(payload.output)) {
+    return payload.output;
+  }
+  if (Array.isArray(payload.outputs)) {
+    return payload.outputs;
+  }
+  return null;
+}
+
+function isSimulatedResponsesFunctionCallOutputItem(item: JsonObject): boolean {
+  return (
+    (tryGetString(item, "type") ?? "").toLowerCase() === "function_call" ||
+    isJsonObject(item.function_call)
+  );
+}
+
+function normalizeSimulatedResponsesFunctionCallItem(
+  item: JsonObject,
+): JsonObject | null {
+  const functionCallNode = isJsonObject(item.function_call) ? item.function_call : null;
+  const name =
+    tryGetString(item, "name") ?? tryGetString(functionCallNode, "name");
+  if (!name) {
+    return null;
+  }
+
+  const itemId = tryGetString(item, "id") ?? createOpenAiOutputItemId("fc");
+  return {
+    id: itemId,
+    type: "function_call",
+    status: tryGetString(item, "status") ?? "completed",
+    call_id:
+      tryGetString(item, "call_id") ??
+      tryGetString(item, "tool_call_id") ??
+      tryGetString(functionCallNode, "call_id") ??
+      itemId,
+    name,
+    arguments: normalizeSimulatedToolArguments(
+      functionCallNode?.arguments !== undefined
+        ? functionCallNode.arguments
+        : item.arguments,
+    ),
+  };
 }
 
 function extractTextFromSimulatedChoices(payload: JsonObject): string | null {
@@ -3197,7 +3252,7 @@ function extractTextFromSimulatedChoices(payload: JsonObject): string | null {
 
 function extractMessageOutputText(outputItem: JsonObject): string {
   const type = (tryGetString(outputItem, "type") ?? "").toLowerCase();
-  if (type === "function_call") {
+  if (type === "function_call" || isJsonObject(outputItem.function_call)) {
     return "";
   }
 

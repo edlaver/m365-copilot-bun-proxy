@@ -43,5 +43,50 @@
     "sourceFile": "manual/edit-file",
     "sourceLine": 3,
     "fileName": "manual-mapped-chat-edit-file-req-3.json"
+  },
+  {
+    "id": "manual-mapped-responses-weather-req-1",
+    "label": "Manual · Weather · req 1 · initial tool list",
+    "requestType": "responses",
+    "transformModes": ["mapped"],
+    "sourceFile": "manual/weather",
+    "sourceLine": 11,
+    "fileName": "manual-mapped-responses-weather-req-1.json"
+  },
+  {
+    "id": "manual-mapped-responses-weather-req-2",
+    "label": "Manual · Weather · req 2 · tool result follow-up",
+    "requestType": "responses",
+    "transformModes": ["mapped"],
+    "sourceFile": "manual/weather",
+    "sourceLine": 12,
+    "fileName": "manual-mapped-responses-weather-req-2.json"
+  },
+  {
+    "id": "manual-mapped-responses-edit-file-req-1",
+    "label": "Manual · Edit file · req 1 · initial tool list",
+    "requestType": "responses",
+    "transformModes": ["mapped"],
+    "sourceFile": "manual/edit-file",
+    "sourceLine": 11,
+    "fileName": "manual-mapped-responses-edit-file-req-1.json"
+  },
+  {
+    "id": "manual-mapped-responses-edit-file-req-2",
+    "label": "Manual · Edit file · req 2 · read_file result follow-up",
+    "requestType": "responses",
+    "transformModes": ["mapped"],
+    "sourceFile": "manual/edit-file",
+    "sourceLine": 12,
+    "fileName": "manual-mapped-responses-edit-file-req-2.json"
+  },
+  {
+    "id": "manual-mapped-responses-edit-file-req-3",
+    "label": "Manual · Edit file · req 3 · apply_diff result follow-up",
+    "requestType": "responses",
+    "transformModes": ["mapped"],
+    "sourceFile": "manual/edit-file",
+    "sourceLine": 13,
+    "fileName": "manual-mapped-responses-edit-file-req-3.json"
   }
 ]

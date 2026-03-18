@@ -1,0 +1,55 @@
+{
+  "model": "m365-copilot",
+  "stream": false,
+  "instructions": "You are a concise weather assistant. Use tools when live weather data is needed.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "What is the weather in London right now, and should I bring an umbrella?"
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "id": "fc_weather_london_1",
+      "call_id": "call_weather_london_1",
+      "name": "get_weather",
+      "arguments": "{\"location\":\"London, UK\",\"unit\":\"celsius\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_weather_london_1",
+      "name": "get_weather",
+      "output": "{\"location\":\"London, UK\",\"temperature_c\":9,\"condition\":\"Light rain\",\"precipitation_chance\":82,\"wind_kph\":18}"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the latest weather for a city.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "City and region to look up."
+            },
+            "unit": {
+              "type": "string",
+              "enum": ["celsius", "fahrenheit"]
+            }
+          },
+          "required": ["location"],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto"
+}
