@@ -39,6 +39,8 @@ export function App() {
   const [pane2, setPane2] = useState(emptyPaneText)
   const [pane3, setPane3] = useState(emptyPaneText)
   const [pane4, setPane4] = useState(emptyPaneText)
+  const [pane4Data, setPane4Data] = useState<unknown>(null)
+  const [selectedPane4FrameTypes, setSelectedPane4FrameTypes] = useState<number[]>([2])
   const [statusText, setStatusText] = useState("Ready")
   const [errorText, setErrorText] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -64,6 +66,8 @@ export function App() {
     setPane2(emptyPaneText)
     setPane3(emptyPaneText)
     setPane4(emptyPaneText)
+    setPane4Data(null)
+    setSelectedPane4FrameTypes([2])
 
     let parsedBody: unknown
     try {
@@ -106,7 +110,10 @@ export function App() {
       if (trace) {
         setPane2(formatJson(trace.pane2 ?? trace.error ?? { status: trace.status }))
         setPane3(formatJson(trace.pane3 ?? { note: "No transformed upstream request was captured." }))
-        setPane4(formatJson(trace.pane4 ?? { note: "No upstream response was captured." }))
+        const nextPane4 =
+          trace.pane4 ?? { note: "No upstream response was captured." }
+        setPane4Data(nextPane4)
+        setPane4(formatJson(filterPane4Data(nextPane4, [2])))
         setStatusText(
           `Trace ${trace.status} · transport ${trace.transport} · proxy ${responseStatus}`
         )
@@ -233,6 +240,34 @@ export function App() {
             description="Buffered raw upstream response before proxy transformation."
             value={pane4}
             readOnly
+            actions={
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                  Frame type
+                </span>
+                {[1, 2, 3].map((frameType) => {
+                  const pressed = selectedPane4FrameTypes.includes(frameType)
+                  return (
+                    <Button
+                      key={frameType}
+                      variant={pressed ? "default" : "outline"}
+                      size="xs"
+                      disabled={!hasPane4Frames(pane4Data)}
+                      aria-pressed={pressed}
+                      onClick={() => {
+                        const nextTypes = pressed
+                          ? selectedPane4FrameTypes.filter((value) => value !== frameType)
+                          : [...selectedPane4FrameTypes, frameType].sort((a, b) => a - b)
+                        setSelectedPane4FrameTypes(nextTypes)
+                        setPane4(formatJson(filterPane4Data(pane4Data, nextTypes)))
+                      }}
+                    >
+                      {frameType}
+                    </Button>
+                  )
+                })}
+              </div>
+            }
           />
         </main>
       </div>
@@ -304,6 +339,37 @@ function formatInline(value: unknown): string {
     return value
   }
   return JSON.stringify(value)
+}
+
+function hasPane4Frames(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false
+  }
+  const frames = (value as Record<string, unknown>).frames
+  return Array.isArray(frames) && frames.length > 0
+}
+
+function filterPane4Data(value: unknown, selectedTypes: number[]): unknown {
+  if (!hasPane4Frames(value)) {
+    return value ?? { note: "No upstream response was captured." }
+  }
+
+  const typed = value as Record<string, unknown>
+  const frames = typed.frames as unknown[]
+  if (selectedTypes.length === 0) {
+    return typed
+  }
+
+  return {
+    ...typed,
+    frames: frames.filter((frame) => {
+      if (!frame || typeof frame !== "object" || Array.isArray(frame)) {
+        return false
+      }
+      const type = (frame as Record<string, unknown>).type
+      return typeof type === "number" && selectedTypes.includes(type)
+    }),
+  }
 }
 
 async function waitForTrace(traceId: string): Promise<TraceResponse | null> {

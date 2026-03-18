@@ -1,4 +1,5 @@
 import Editor from "@monaco-editor/react"
+import type { ReactNode } from "react"
 
 import {
   Card,
@@ -14,6 +15,7 @@ type JsonPaneProps = {
   value: string
   readOnly?: boolean
   onChange?: (value: string) => void
+  actions?: ReactNode
 }
 
 export function JsonPane({
@@ -22,6 +24,7 @@ export function JsonPane({
   value,
   readOnly = false,
   onChange,
+  actions,
 }: JsonPaneProps) {
   const monacoTheme =
     typeof document !== "undefined" &&
@@ -36,6 +39,7 @@ export function JsonPane({
           <CardTitle>{title}</CardTitle>
           <CardDescription>{description}</CardDescription>
         </div>
+        {actions ? <div className="shrink-0">{actions}</div> : null}
       </CardHeader>
       <CardContent className="min-h-0 flex-1">
         <Editor
