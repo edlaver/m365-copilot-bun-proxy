@@ -453,8 +453,16 @@ export class CopilotSubstrateClient {
             if (
               request.transformMode === OpenAiTransformModes.Simulated &&
               this.options.substrate.earlyCompleteOnSimulatedPayload &&
-              hasCompleteSimulatedPayload(extractedAssistantText)
+              resolveCompleteSimulatedAssistantText(
+                extractedAssistantText,
+                deltaBuilder,
+              )
             ) {
+              assistantText =
+                resolveCompleteSimulatedAssistantText(
+                  extractedAssistantText,
+                  deltaBuilder,
+                ) ?? assistantText;
               completed = true;
               break;
             }
@@ -1197,6 +1205,24 @@ function hasCompleteSimulatedPayload(assistantText: string): boolean {
   }
 
   return Boolean(tryGetString(responsesPayload, "output_text")?.trim());
+}
+
+function resolveCompleteSimulatedAssistantText(
+  latestAssistantText: string | null,
+  accumulatedAssistantText: string,
+): string | null {
+  if (latestAssistantText && hasCompleteSimulatedPayload(latestAssistantText)) {
+    return latestAssistantText;
+  }
+
+  if (
+    accumulatedAssistantText &&
+    hasCompleteSimulatedPayload(accumulatedAssistantText)
+  ) {
+    return accumulatedAssistantText;
+  }
+
+  return null;
 }
 
 function buildNormalizedConversation(
