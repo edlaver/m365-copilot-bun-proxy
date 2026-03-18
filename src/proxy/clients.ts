@@ -716,6 +716,10 @@ export function resolveSubstrateTone(model: string | null | undefined): string {
       return "Gpt_5_2_Chat";
     case "m365-copilot-gpt5.2-reasoning":
       return "Gpt_5_2_Reasoning";
+    case "m365-copilot-gpt5.4-quick":
+      return "Gpt_5_4_Chat";
+    case "m365-copilot-gpt5.4-reasoning":
+      return "Gpt_5_4_Reasoning";
     case "m365-copilot":
     case "m365-copilot-auto":
     case "m365-copilot-magic":

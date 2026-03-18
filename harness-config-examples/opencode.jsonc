@@ -45,6 +45,16 @@
           "name": "M365 Copilot GPT-5.2 (Reasoning | Completions)",
           "tool_call": true,
           "reasoning": true
+        },
+        "m365-copilot-gpt5.4-quick": {
+          "name": "M365 Copilot GPT-5.4 (Quick | Completions)",
+          "tool_call": true,
+          "reasoning": false
+        },
+        "m365-copilot-gpt5.4-reasoning": {
+          "name": "M365 Copilot GPT-5.4 (Reasoning | Completions)",
+          "tool_call": true,
+          "reasoning": true
         }
       }
     },
@@ -78,6 +88,16 @@
         },
         "m365-copilot-gpt5.2-reasoning": {
           "name": "M365 Copilot GPT-5.2 (Reasoning | Responses)",
+          "tool_call": true,
+          "reasoning": true
+        },
+        "m365-copilot-gpt5.4-quick": {
+          "name": "M365 Copilot GPT-5.4 (Quick | Responses)",
+          "tool_call": true,
+          "reasoning": false
+        },
+        "m365-copilot-gpt5.4-reasoning": {
+          "name": "M365 Copilot GPT-5.4 (Reasoning | Responses)",
           "tool_call": true,
           "reasoning": true
         }

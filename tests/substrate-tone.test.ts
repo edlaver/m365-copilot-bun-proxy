@@ -22,6 +22,18 @@ describe("resolveSubstrateTone", () => {
     );
   });
 
+  test("maps gpt 5.4 quick model to Gpt_5_4_Chat tone", () => {
+    expect(resolveSubstrateTone("m365-copilot-gpt5.4-quick")).toBe(
+      "Gpt_5_4_Chat",
+    );
+  });
+
+  test("maps gpt 5.4 reasoning model to Gpt_5_4_Reasoning tone", () => {
+    expect(resolveSubstrateTone("m365-copilot-gpt5.4-reasoning")).toBe(
+      "Gpt_5_4_Reasoning",
+    );
+  });
+
   test("maps magic-family models to magic tone", () => {
     expect(resolveSubstrateTone("m365-copilot")).toBe("magic");
     expect(resolveSubstrateTone("m365-copilot-auto")).toBe("magic");
@@ -36,8 +48,12 @@ describe("resolveSubstrateTone", () => {
   });
 
   test("is case-insensitive", () => {
-    expect(resolveSubstrateTone("M365-COPILOT-GPT5.2-QUICK")).toBe(
-      "Gpt_5_2_Chat",
+    expect(resolveSubstrateTone("M365-COPILOT-GPT5.2-QUICK")).toBe("Gpt_5_2_Chat");
+    expect(resolveSubstrateTone("M365-COPILOT-GPT5.4-QUICK")).toBe(
+      "Gpt_5_4_Chat",
+    );
+    expect(resolveSubstrateTone("M365-COPILOT-GPT5.4-REASONING")).toBe(
+      "Gpt_5_4_Reasoning",
     );
   });
 });

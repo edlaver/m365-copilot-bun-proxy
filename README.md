@@ -148,6 +148,8 @@ The proxy accepts any OpenAI-compatible `model` string, but for Substrate transp
 - "Think Deeper" => `Reasoning`
 - "GPT5.2 Quick" => `Gpt_5_2_Chat`
 - "GPT5.2 Think deeper" => `Gpt_5_2_Reasoning`
+- "GPT5.4 Quick" => `Gpt_5_4_Chat`
+- "GPT5.4 Think deeper" => `Gpt_5_4_Reasoning`
 
 Model to Substrate `tone` mapping:
 
@@ -159,6 +161,8 @@ Model to Substrate `tone` mapping:
 - `m365-copilot-reasoning` -> `Reasoning`
 - `m365-copilot-gpt5.2-quick` -> `Gpt_5_2_Chat`
 - `m365-copilot-gpt5.2-reasoning` -> `Gpt_5_2_Reasoning`
+- `m365-copilot-gpt5.4-quick` -> `Gpt_5_4_Chat`
+- `m365-copilot-gpt5.4-reasoning` -> `Gpt_5_4_Reasoning`
 
 Notes:
 
