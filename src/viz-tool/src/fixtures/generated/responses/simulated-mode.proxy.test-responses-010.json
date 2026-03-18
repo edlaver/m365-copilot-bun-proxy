@@ -1,34 +1,7 @@
 {
-  "model": "m365-copilot",
+  "model": "{{model}}",
   "stream": false,
-  "conversation": "conv_replay_guard_non_stream",
-  "input": [
-    {
-      "role": "user",
-      "content": [
-        {
-          "type": "input_text",
-          "text": "Hi"
-        }
-      ]
-    },
-    {
-      "role": "assistant",
-      "content": [
-        {
-          "type": "output_text",
-          "text": "Hi"
-        }
-      ]
-    },
-    {
-      "role": "assistant",
-      "content": [
-        {
-          "type": "output_text",
-          "text": "Hi"
-        }
-      ]
-    }
-  ]
+  "conversation": "conv_spec_string_2",
+  "previous_response_id": "resp_prev_1",
+  "input": "Say hello."
 }

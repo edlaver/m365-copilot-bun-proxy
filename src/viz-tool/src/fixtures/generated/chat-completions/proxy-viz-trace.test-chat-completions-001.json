@@ -1,6 +1,5 @@
 {
   "model": "{{model}}",
-  "user": "roo-thread-1",
   "messages": [
     {
       "role": "user",

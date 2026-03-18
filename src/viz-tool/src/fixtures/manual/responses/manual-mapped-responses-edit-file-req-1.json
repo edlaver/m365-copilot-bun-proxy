@@ -1,5 +1,5 @@
 {
-  "model": "m365-copilot",
+  "model": "{{model}}",
   "stream": false,
   "instructions": "You are a coding assistant. Use tools for file inspection and edits.",
   "input": [

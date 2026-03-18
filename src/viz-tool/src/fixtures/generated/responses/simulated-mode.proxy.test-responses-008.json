@@ -1,8 +1,6 @@
 {
-  "model": "m365-copilot",
+  "model": "{{model}}",
   "stream": false,
-  "conversation": {
-    "id": "conv_spec_object_1"
-  },
+  "conversation": "conv_spec_string_1",
   "input": "Say hello."
 }

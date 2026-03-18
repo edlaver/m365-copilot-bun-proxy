@@ -1,5 +1,5 @@
 {
-  "model": "m365-copilot",
+  "model": "{{model}}",
   "user": "roo-thread-1",
   "messages": [
     {

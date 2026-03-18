@@ -30,8 +30,12 @@ const emptyPaneText = JSON.stringify(
   2
 )
 const maxProxyRetryAttempts = 3
+const preferredDefaultModel = "m365-copilot"
 
 export function App() {
+  const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [selectedModel, setSelectedModel] = useState("")
+  const [isLoadingModels, setIsLoadingModels] = useState(true)
   const [transformMode, setTransformMode] = useState<TransformMode>("mapped")
   const [requestType, setRequestType] = useState<RequestType>("chat/completions")
   const [selectedFixtureId, setSelectedFixtureId] = useState("")
@@ -59,6 +63,62 @@ export function App() {
     setSelectedFixtureId(selectedFixture.id)
     setPane1(selectedFixture.content)
   }, [selectedFixtureId, selectedFixture])
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    async function loadModels() {
+      setIsLoadingModels(true)
+      try {
+        const response = await fetchWithProxyRetry("/v1/models", {
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          throw new Error(`Model list request failed with ${response.status}.`)
+        }
+
+        const payload = (await response.json()) as {
+          data?: Array<{ id?: unknown }>
+        }
+        const nextModels = Array.isArray(payload.data)
+          ? payload.data
+              .map((entry) => (typeof entry?.id === "string" ? entry.id : null))
+              .filter((value): value is string => Boolean(value))
+          : []
+
+        if (nextModels.length === 0) {
+          throw new Error("No models were returned by the proxy.")
+        }
+
+        setAvailableModels(nextModels)
+        setSelectedModel((current) =>
+          current && nextModels.includes(current)
+            ? current
+            : nextModels.includes(preferredDefaultModel)
+              ? preferredDefaultModel
+              : nextModels[0]
+        )
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return
+        }
+        setAvailableModels([])
+        setSelectedModel("")
+        setErrorText(`Unable to load models. ${String(error)}`)
+        setStatusText("Model list unavailable")
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoadingModels(false)
+        }
+      }
+    }
+
+    void loadModels()
+
+    return () => {
+      controller.abort()
+    }
+  }, [])
 
   useEffect(() => {
     setPane4(formatJson(filterPane4Data(pane4Data, selectedPane4FrameTypes)))
@@ -100,6 +160,13 @@ export function App() {
     setPane4Data(null)
     setSelectedPane4FrameTypes([2])
 
+    if (!selectedModel) {
+      setErrorText("A model must be selected before submitting.")
+      setStatusText("Model required")
+      setIsSubmitting(false)
+      return
+    }
+
     let parsedBody: unknown
     try {
       parsedBody = JSON.parse(pane1)
@@ -132,7 +199,7 @@ export function App() {
           "x-m365-openai-transform-mode": transformMode,
           "x-m365-viz-trace-id": traceId,
         },
-        body: JSON.stringify(parsedBody),
+        body: JSON.stringify(replaceFixtureTemplates(parsedBody, selectedModel)),
       })
       responseStatus = response.status
       responseText = await response.text()
@@ -193,7 +260,26 @@ export function App() {
             </div>
 
             <div className="flex flex-col gap-3 xl:min-w-[840px]">
-              <div className="grid gap-3 md:grid-cols-[180px_220px_minmax(0,1fr)_auto]">
+              <div className="grid gap-3 md:grid-cols-[220px_180px_220px_minmax(0,1fr)_auto]">
+                <ToolbarSelect
+                  label="Model"
+                  value={selectedModel}
+                  onChange={setSelectedModel}
+                  options={
+                    availableModels.length > 0
+                      ? availableModels.map((model) => ({
+                          label: model,
+                          value: model,
+                        }))
+                      : [
+                          {
+                            label: isLoadingModels ? "Loading models..." : "No models available",
+                            value: "",
+                          },
+                        ]
+                  }
+                  disabled={isLoadingModels || availableModels.length === 0}
+                />
                 <ToolbarSelect
                   label="Transform"
                   value={transformMode}
@@ -330,6 +416,7 @@ type ToolbarSelectProps = {
   value: string
   onChange: (value: string) => void
   options: ToolbarOption[]
+  disabled?: boolean
 }
 
 function ToolbarSelect({
@@ -337,6 +424,7 @@ function ToolbarSelect({
   value,
   onChange,
   options,
+  disabled = false,
 }: ToolbarSelectProps) {
   return (
     <div className="space-y-1.5">
@@ -346,6 +434,7 @@ function ToolbarSelect({
           "h-11 w-full rounded-xl border border-border/70 bg-background/85 px-3 text-sm shadow-sm outline-none transition focus:border-ring focus:ring-3 focus:ring-ring/25"
         )}
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       >
         {options.map((option) => (
@@ -384,6 +473,24 @@ function formatInline(value: unknown): string {
     return value
   }
   return JSON.stringify(value)
+}
+
+function replaceFixtureTemplates(value: unknown, selectedModel: string): unknown {
+  if (value === "{{model}}") {
+    return selectedModel
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => replaceFixtureTemplates(item, selectedModel))
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [
+        key,
+        replaceFixtureTemplates(nestedValue, selectedModel),
+      ])
+    )
+  }
+  return value
 }
 
 function hasPane4Frames(value: unknown): boolean {

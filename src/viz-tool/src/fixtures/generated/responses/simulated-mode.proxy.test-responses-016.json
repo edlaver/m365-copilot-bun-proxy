@@ -1,5 +1,5 @@
 {
-  "model": "m365-copilot",
+  "model": "{{model}}",
   "stream": false,
   "input": [
     {
@@ -7,15 +7,6 @@
       "content": [
         {
           "type": "input_text",
-          "text": "Hi"
-        }
-      ]
-    },
-    {
-      "role": "assistant",
-      "content": [
-        {
-          "type": "output_text",
           "text": "Hi"
         }
       ]

@@ -1,5 +1,5 @@
 {
-  "model": "m365-copilot",
+  "model": "{{model}}",
   "stream": true,
   "input": [
     {
@@ -7,7 +7,7 @@
       "content": [
         {
           "type": "input_text",
-          "text": "B"
+          "text": "A"
         }
       ]
     }

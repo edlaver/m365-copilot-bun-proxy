@@ -78,7 +78,7 @@ async function main(): Promise<void> {
         .then(() =>
           fs.writeFile(
             path.join(requestDir, fileName),
-            `${JSON.stringify(request.body, null, 2)}\n`,
+            `${JSON.stringify(normalizeFixtureBody(request.body), null, 2)}\n`,
             "utf8",
           ),
         )
@@ -320,6 +320,26 @@ function resolveExpressionValue(
   }
 
   return undefined
+}
+
+function normalizeFixtureBody(value: JsonValue): JsonValue {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeFixtureBody(item))
+  }
+
+  if (value && typeof value === "object") {
+    const result: Record<string, JsonValue> = {}
+    for (const [key, nestedValue] of Object.entries(value)) {
+      if (key === "model" && typeof nestedValue === "string" && nestedValue.trim()) {
+        result[key] = "{{model}}"
+        continue
+      }
+      result[key] = normalizeFixtureBody(nestedValue)
+    }
+    return result
+  }
+
+  return value
 }
 
 function unwrapExpression(

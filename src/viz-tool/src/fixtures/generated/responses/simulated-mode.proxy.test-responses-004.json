@@ -1,15 +1,29 @@
 {
-  "model": "m365-copilot",
-  "stream": true,
-  "input": [
+  "model": "{{model}}",
+  "stream": false,
+  "input": "What's the weather in London?",
+  "tools": [
     {
-      "role": "user",
-      "content": [
-        {
-          "type": "input_text",
-          "text": "A"
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the weather for a location.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string"
+            },
+            "unit": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "location",
+            "unit"
+          ]
         }
-      ]
+      }
     }
   ]
 }

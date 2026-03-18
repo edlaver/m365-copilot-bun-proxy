@@ -1,7 +1,6 @@
 {
   "model": "{{model}}",
   "stream": false,
-  "conversation": "conv_replay_guard_non_stream",
   "input": [
     {
       "role": "user",

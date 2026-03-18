@@ -1,5 +1,5 @@
 {
-  "model": "m365-copilot",
+  "model": "{{model}}",
   "stream": false,
   "input": "Say hello."
 }

@@ -1,5 +1,5 @@
 {
-  "model": "m365-copilot",
+  "model": "{{model}}",
   "stream": false,
   "instructions": "You are a concise weather assistant. Use tools when live weather data is needed.",
   "input": [
