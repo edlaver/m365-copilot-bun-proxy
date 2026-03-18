@@ -15,44 +15,44 @@
   "provider": {
     "m365-copilot-bun-proxy-completions": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "m365-copilot-bun-proxy (Completions)",
+      "name": "m365-copilot-bun-proxy [Completions]",
       "options": {
         "baseURL": "http://localhost:4000/v1/",
         "apiKey": "ignore"
       },
       "models": {
         "m365-copilot-auto": {
-          "name": "M365 Copilot (Auto | Completions)",
+          "name": "GPT-5 | Auto | Completions [365Pilot]",
           "tool_call": true,
           "reasoning": false
         },
         "m365-copilot-quick": {
-          "name": "M365 Copilot (Quick | Completions)",
+          "name": "GPT-5 | Quick | Completions [365Pilot]",
           "tool_call": true,
           "reasoning": false
         },
         "m365-copilot-reasoning": {
-          "name": "M365 Copilot (Reasoning | Completions)",
+          "name": "GPT-5 | Reasoning | Completions [365Pilot]",
           "tool_call": true,
           "reasoning": true
         },
         "m365-copilot-gpt5.2-quick": {
-          "name": "M365 Copilot GPT-5.2 (Quick | Completions)",
+          "name": "GPT-5.2 | Quick | Completions [365Pilot]",
           "tool_call": true,
           "reasoning": false
         },
         "m365-copilot-gpt5.2-reasoning": {
-          "name": "M365 Copilot GPT-5.2 (Reasoning | Completions)",
+          "name": "GPT-5.2 | Reasoning | Completions [365Pilot]",
           "tool_call": true,
           "reasoning": true
         },
         "m365-copilot-gpt5.4-quick": {
-          "name": "M365 Copilot GPT-5.4 (Quick | Completions)",
+          "name": "GPT-5.4 | Quick | Completions [365Pilot]",
           "tool_call": true,
           "reasoning": false
         },
         "m365-copilot-gpt5.4-reasoning": {
-          "name": "M365 Copilot GPT-5.4 (Reasoning | Completions)",
+          "name": "GPT-5.4 | Reasoning | Completions [365Pilot]",
           "tool_call": true,
           "reasoning": true
         }
@@ -60,44 +60,44 @@
     },
     "m365-copilot-bun-proxy-responses": {
       "npm": "@ai-sdk/openai",
-      "name": "m365-copilot-bun-proxy (Responses)",
+      "name": "m365-copilot-bun-proxy [Responses]",
       "options": {
         "baseURL": "http://localhost:4000/v1/",
         "apiKey": "ignore"
       },
       "models": {
         "m365-copilot-auto": {
-          "name": "M365 Copilot (Auto | Responses)",
+          "name": "GPT-5 | Auto | Responses [365Pilot]",
           "tool_call": true,
           "reasoning": false
         },
         "m365-copilot-quick": {
-          "name": "M365 Copilot (Quick | Responses)",
+          "name": "GPT-5 | Quick | Responses [365Pilot]",
           "tool_call": true,
           "reasoning": false
         },
         "m365-copilot-reasoning": {
-          "name": "M365 Copilot (Reasoning | Responses)",
+          "name": "GPT-5 | Reasoning | Responses [365Pilot]",
           "tool_call": true,
           "reasoning": true
         },
         "m365-copilot-gpt5.2-quick": {
-          "name": "M365 Copilot GPT-5.2 (Quick | Responses)",
+          "name": "GPT-5.2 | Quick | Responses [365Pilot]",
           "tool_call": true,
           "reasoning": false
         },
         "m365-copilot-gpt5.2-reasoning": {
-          "name": "M365 Copilot GPT-5.2 (Reasoning | Responses)",
+          "name": "GPT-5.2 | Reasoning | Responses [365Pilot]",
           "tool_call": true,
           "reasoning": true
         },
         "m365-copilot-gpt5.4-quick": {
-          "name": "M365 Copilot GPT-5.4 (Quick | Responses)",
+          "name": "GPT-5.4 | Quick | Responses [365Pilot]",
           "tool_call": true,
           "reasoning": false
         },
         "m365-copilot-gpt5.4-reasoning": {
-          "name": "M365 Copilot GPT-5.4 (Reasoning | Responses)",
+          "name": "GPT-5.4 | Reasoning | Responses [365Pilot]",
           "tool_call": true,
           "reasoning": true
         }
